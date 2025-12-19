@@ -1,0 +1,9 @@
+[project]
+name = "mogptk-examples"
+version = "0.1.0"
+description = "Tutorials and Examples of MOGPTK"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "mogptk>=0.5.2",
+]
