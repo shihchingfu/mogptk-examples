@@ -1,0 +1,387 @@
+---
+title: "Fit MOSM GP to toy example"
+format: 
+  html:
+    embed-resources: true
+---
+
+```{r}
+library(here)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(cmdstanr)
+library(posterior)
+library(bayesplot)
+library(readr)
+
+register_knitr_engine(override = FALSE)
+
+theme_set(theme_bw())
+color_scheme_set("viridis") # bayesplot
+
+EXECUTE_SAMPLING <- TRUE
+SEED <- round(runif(n = 1, 0, 999))
+SEED 
+```
+
+# Data
+
+For a generic sinusoid:
+
+$$y(t) = \textrm{A} \sin \left(2 \pi f [t - \theta] + \phi\right)$$
+
+$$f_1 \sim \mathcal{N}(2.0 \sin(2\pi(0.7)[t - 0.0] + 0.0), 0.15^2)$$
+$$f_2 \sim \mathcal{N}(2.0 \sin(2\pi (0.7)[t - 0.4] + 0.0), 0.15^2)$$
+
+```{r}
+D <- 2
+
+amplitude <- 2.0
+noise_sigma <- 0.25
+frequency <- 0.7 # cycles/s
+omega <- 2*pi*frequency # radians/s
+delay <- 0.4 # radians
+phase <- 0.0
+
+missing_pct <- 0.2
+n_points <- 200 # per band
+n_cycles <- 5
+
+build_dataset <- function() {
+
+  set.seed(-1)
+  t <- seq(from = 0, to = n_cycles/frequency, length.out = n_points)
+  
+  f1 <- amplitude * sin(omega * t)
+  y1 <- f1 + noise_sigma*rnorm(n = n_points)
+  
+  f2 <- amplitude * sin(omega * (t - delay) + phase)
+  y2 <- f2 + noise_sigma*rnorm(n = n_points)
+  
+  y1_mask <- runif(n_points) <= missing_pct
+  y2_mask <- runif(n_points) <= missing_pct
+  
+  full_df <- data.frame(
+    t = c(t, t),
+    f = c(f1, f2),
+    y = c(y1, y2),
+    y_se = rep(noise_sigma, D*n_points),
+    d = as.integer(rep(1:D, each = n_points)),
+    masked = c(y1_mask, y2_mask)
+  ) 
+
+  return(full_df)
+}
+
+full_df <- build_dataset()
+input_df <- full_df |> filter(!masked)
+
+write_csv(input_df, "mcar_sinusoid.csv")
+
+ns <- table(input_df$d)
+ns
+```
+
+```{r}
+full_df |> 
+  ggplot() +
+  aes(x = t, y = y) +
+  geom_linerange(aes(ymax = y + y_se, ymin = y - y_se), colour = "black") +
+  geom_line(aes(y = f), colour = "darkgreen", alpha = 0.8) +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = delay, linetype = "dotted") +
+  geom_point(aes(colour = !masked)) +
+  facet_grid(rows = vars(d)) +
+  labs(colour = "Observed")
+```
+
+## Target locations
+
+```{r}
+n_star <- 100 # in each band
+N_star <- n_star * D
+ns_star = rep(n_star, D)
+
+star_df <- data.frame(
+  t_star = rep(seq(from = 0, to = n_cycles/frequency, length.out = n_star), D),
+  d_star = as.integer(rep(1:D, each = n_star))
+)
+```
+
+# Model Fitting
+
+```{r}
+mosmgp_nophi_stan <- cmdstan_model(here("stan", "moskgp-nophi.stan"))
+#mosmgp_nophi_stan$expose_functions()
+```
+
+```{r}
+SEED
+```
+
+## Sampling
+
+```{r}
+data_list <- list(
+  D = D,
+  N = NROW(input_df),
+  ns = ns,
+  d = input_df$d,
+  x = input_df$t,
+  y = input_df$y,
+  y_se = input_df$y_se,
+  N_star = N_star,
+  ns_star = ns_star,
+  d_star = star_df$d_star,
+  x_star = star_df$t_star
+)
+```
+
+```{r}
+format(start_time <- Sys.time())
+```
+
+```{r}
+if (EXECUTE_SAMPLING) {
+  
+  output <- mosmgp_nophi_stan$sample(
+    data = data_list,
+    seed = SEED,
+    chains = 6,
+    parallel_chains = 6,
+    iter_warmup = 200,
+    iter_sampling = 500,
+    refresh = 100,
+    show_exceptions = FALSE,
+    show_messages = TRUE
+  )
+  
+  output$save_object(here("RDS", "mosk_toy_sinusoid_nophi.RDS"))
+  
+} else {
+  output <- readRDS(here("RDS", "mosk_toy_sinusoid_nophi.RDS"))
+}
+```
+
+```{r}
+format(finish_time <- Sys.time())
+difftime(finish_time, start_time)  
+```
+
+# Results
+
+```{r}
+vars <- c("w", "Sigma", "mu", "theta", "deltaTheta")
+output$summary(variables = vars, 
+               posterior::default_convergence_measures())
+```
+
+```{r}
+output_draws_df <- output$draws(variables = vars, format = "df") |> 
+  subset_draws(chain = c(1,5)) 
+
+output_draws_df |> 
+  summary(posterior::default_convergence_measures())
+```
+
+```{r}
+output_draws_df |> mcmc_trace()
+```
+
+## Prior predictive samples
+
+```{r eval=FALSE}
+set.seed(SEED)
+
+prior_pred_samples <- output$draws(variables = "f_prior", format = "df") |> 
+  as.data.frame() |> 
+  select(sample = .draw, starts_with("f_prior")) |> 
+  drop_na() |> 
+  arrange(sample)
+
+n_pred_samples <- NROW(prior_pred_samples)
+
+prior_pred_samples |> 
+  slice_sample(n = n_pred_samples) |> 
+  pivot_longer(starts_with("f_prior"), 
+               names_to = "index", 
+               names_pattern = "([0-9]+)") |> 
+  cbind(t = rep(input_df$t, n_pred_samples),
+        y = rep(input_df$y, n_pred_samples),
+        d = factor(rep(input_df$d, n_pred_samples))) |> 
+  ggplot() +
+  aes(x = t, y = value, group = interaction(factor(sample),d), colour = d) +
+  geom_line(alpha = 0.1) +
+  geom_point(aes(y = y), colour = "black", size = 0.5) +
+  facet_grid(rows = vars(d), scales = "free") +
+  labs(title = paste0("Prior predictive samples (seed=", SEED,")")) +
+  theme(legend.position = "none") 
+```
+
+## Hyperparameter Posteriors
+
+```{r}
+mcmc_hist(output_draws_df, facet_args = list(ncol = 4))
+```
+
+```{r}
+mcmc_dens(output_draws_df, facet_args = list(ncol = 4))
+```
+
+```{r}
+# Function estimates the mode of a sample
+estimate_mode <- function(x) {
+  d <- density(x, n = 2^10)
+  d$x[which.max(d$y)]
+}
+
+output_draws_df |> 
+  summary(
+    mode = ~ estimate_mode(.),
+    mean,
+    sd = posterior::sd,
+    median,
+    quantiles = ~ quantile2(., probs = c(0.16, 0.84))
+  )
+```
+
+```{r}
+output_draws_df |> 
+  select(.draw, starts_with("w")) |> 
+  pivot_longer(2:3) |> 
+  drop_na(value) |> 
+  ggplot() +
+  aes(x = value) +
+  geom_histogram() +
+  facet_wrap(vars(name), scales = "free_y")
+```
+
+```{r}
+output_draws_df |> 
+  select(.draw, starts_with("Sigma")) |> 
+  pivot_longer(2:3) |> 
+  drop_na(value) |> 
+  ggplot() +
+  aes(x = value) +
+  geom_histogram() +
+  facet_wrap(vars(name), scales = "free_y")
+```
+
+```{r}
+output_draws_df |> 
+  select(.draw, starts_with("mu")) |> 
+  pivot_longer(2:3) |> 
+  drop_na(value) |> 
+  ggplot() +
+  aes(x = value) +
+  geom_histogram() +
+  facet_wrap(vars(name), scales = "free")
+```
+
+```{r}
+output_draws_df |> 
+  select(.draw, starts_with("theta")) |> 
+  pivot_longer(2:3) |> 
+  drop_na(value) |> 
+  ggplot() +
+  aes(x = value) +
+  geom_histogram() +
+  facet_wrap(vars(name), scales = "free_y")
+```
+
+```{r}
+output_draws_df |> 
+  mcmc_pairs(pars = c("w[1]", "w[2]"), off_diag_fun = "hex")
+```
+
+
+```{r}
+output_draws_df |> 
+  mcmc_pairs(pars = c("Sigma[1]", "Sigma[2]"), off_diag_fun = "hex")
+```
+
+```{r}
+output_draws_df |> 
+  mcmc_pairs(pars = c("mu[1]", "mu[2]"), off_diag_fun = "hex")
+```
+
+
+```{r}
+output_draws_df |> 
+  mcmc_pairs(pars = c("theta[1]", "theta[2]"), off_diag_fun = "hex")
+```
+
+## Posterior Predictive samples
+
+```{r}
+set.seed(SEED)
+post_pred_samples_wide <- output$draws(variables = "f_star", format = "df") |> 
+  as.data.frame() |> 
+  select(sample = .draw, .chain, starts_with("f_star")) |> 
+  arrange(sample) 
+
+post_pred_samples <- post_pred_samples_wide |> 
+  pivot_longer(starts_with("f_star"), 
+               names_to = "index", 
+               names_pattern = "([0-9]+)") |> 
+  cbind(t = star_df$t_star,
+        d = factor(star_df$d_star))
+
+```
+
+```{r}
+post_pred_samples |> 
+  ggplot() +
+  aes(x = t, y = value, colour = d, group = sample) +
+  geom_line(alpha = 0.05) +
+  facet_grid(rows = vars(d)) +
+  geom_point(data = input_df, mapping = aes(x = t, y = y, group = d), colour = "black", size = 0.5) +
+  labs(y = "y", title = paste0("Posterior predictive samples (seed=", SEED,")")) +
+  theme(legend.position = "none") 
+```
+
+```{r}
+valid_postpred_sample_ids <- post_pred_samples_wide |> 
+  filter(.chain %in% c(1,5)) |> 
+  pull(sample)
+valid_postpred_sample_ids
+```
+
+```{r}
+str(output_draws_df)
+```
+
+```{r}
+paste0("frequency = ", frequency)
+paste0("omega = ", omega)
+paste0("amplitude = ", amplitude)
+paste0("delay = ", delay)
+paste0("phase = ", phase)
+paste0("noise_sigma = ", noise_sigma)
+```
+
+```{r}
+output_draws_df |> 
+  pivot_longer(cols = c(`theta[1]`, `theta[2]`), names_to = "Parameter") |> 
+  ggplot() +
+  aes(x = value, fill = Parameter) +
+  geom_histogram(position = "identity", bins = 50, alpha = 0.5)
+```
+
+```{r}
+median(output_draws_df$`theta[1]`) - median(output_draws_df$`theta[2]`)
+```
+
+```{r}
+output_draws_df |> 
+  ggplot() +
+  aes(x = deltaTheta) +
+  geom_histogram(bins = 30) +
+  geom_vline(xintercept = median(output_draws_df$deltaTheta), colour = "red")
+```
+
+```{r}
+quantile(output_draws_df$deltaTheta)
+```
+
