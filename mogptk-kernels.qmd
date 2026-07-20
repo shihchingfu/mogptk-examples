@@ -1,0 +1,232 @@
+---
+title: "MOGPTK Kernels"
+format: 
+  html:
+    embed-resources: true
+---
+
+This notebook explores the parameterisation of multi-output Gaussian process kernels in the spectral (Fourier) and time domains.
+
+For full details see:
+
+> Parra, Gabriel, and Felipe Tobar. 2017. “Spectral Mixture Kernels for Multi-Output Gaussian Processes.” arXiv:1709.01298. Preprint, arXiv, November 3. <https://doi.org/10.48550/arXiv.1709.01298.>
+
+
+```{r}
+library(ggplot2)
+library(latex2exp)
+library(patchwork)
+library(gsignal)
+library(latex2exp)
+
+theme_set(theme_minimal())
+```
+
+# Multi-output (Single) Spectral Mixture ($Q = 1$)
+
+In the spectral domain, specify the spectral density $S_{ij}(\omega)$ as a squared-exponential (SE) function.
+
+$$
+S_{ij}(\omega) = \frac{w_{ij}}{2}\left\{\exp\left[ -\frac{1}{2}(\omega - \mu_{ij})^\top \Sigma_{ij}^{-1}(\omega - \mu_{ij} ) + \imath(\theta_{ij}^\top \omega + \phi_{ij})\right] + \exp\left[ -\frac{1}{2}(\omega + \mu_{ij})^\top \Sigma_{ij}^{-1}(\omega + \mu_{ij} ) + \imath(-\theta_{ij}^\top \omega + \phi_{ij})\right]\right\}
+$$
+
+- Magnitude (weight of component): $w_{ij}$
+- Covariance: $\Sigma_{ij}$
+- Mean: $\mu_{ij}$
+- Delay: $\theta_{ij} = \theta_i - \theta_j$
+- Phase: $\phi_{ij} = \phi_i - \phi_j$
+
+**NB:** the above parameters describe the shape of the kernel in the *spectral* domain.
+
+```{r}
+# Function that returns the cross-spectral density 
+S_ij <- function(omegas, i, j, ws, Sigmas, mus, thetas, phis) {
+  
+  Sigma_ij <- 2 * Sigmas[i] / (Sigmas[i] + Sigmas[j]) * Sigmas[j]
+  mu_ij <- (Sigmas[i]*mus[j] + Sigmas[j]*mus[i]) / (Sigmas[i] + Sigmas[j])
+  w_ij <- ws[i]*ws[j] * exp( -0.25*(mus[i]-mus[j])^2 / (Sigmas[i] + Sigmas[j]) )
+  theta_ij <- thetas[i] - thetas[j]
+  phi_ij <- phis[i] - phis[j]
+  
+  w_ij/2 * (
+    exp( 
+      complex(
+        real = -0.5 * (omegas - mu_ij)^2 / Sigma_ij,
+        imaginary = theta_ij * omegas + phi_ij
+      )
+    ) +
+      exp( 
+      complex(
+        real = -0.5 * (omegas + mu_ij)^2 / Sigma_ij,
+        imaginary = -theta_ij * omegas + phi_ij
+      )
+    )
+  )
+}
+```
+
+The Fourier pair of the above is
+
+$$k_{ij}(\tau) = \alpha_{ij} \exp \left( -\frac{1}{2} (\tau + \theta_{ij})^\top \Sigma_{ij}(\tau + \theta_{ij}) \right) \cos \left( (\tau + \theta_{ij})^\top \mu_{ij} + \phi_{ij} \right), \qquad \alpha_{ij} = w_{ij} (2\pi)^{n/2} | \Sigma_{ij} |^{1/2}$$
+
+```{r}
+# Multi-output spectral kernel
+k_ij <- function(taus, i, j, ws, sigmas, mus, thetas, phis) {
+
+  Sigma_ij <- 2 * Sigmas[i] / (Sigmas[i] + Sigmas[j]) * Sigmas[j]
+  mu_ij <- (Sigmas[i]*mus[j] + Sigmas[j]*mus[i]) / (Sigmas[i] + Sigmas[j])
+  w_ij <- ws[i]*ws[j] * exp( -0.25*(mus[i]-mus[j])^2 / (Sigmas[i] + Sigmas[j]) )
+  theta_ij <- thetas[i] - thetas[j]
+  phi_ij <- phis[i] - phis[j]
+  
+  alpha_ij <- w_ij * (2*pi)^0.5 * abs(Sigma_ij)^0.5
+  alpha_ij*exp(-0.5*(taus+theta_ij)^2*Sigma_ij) * cos( (taus+theta_ij)*mu_ij + phi_ij)
+}
+```
+
+```{r}
+plot_ktau_Somega <- function(taus, ws, Sigmas, mus, thetas, phis) {
+  
+  tau_inc <- taus[2] - taus[1]
+  
+  ks <- k_ij(taus, 1, 2, ws, Sigmas, mus, thetas, phis)
+  
+  #omegas <- seq_along(taus)*(1/tau_inc)/length(taus)
+  omegas <- ( seq_along(taus)-(length(taus)/2) ) * (1/(tau_inc * length(taus)))
+  
+  Ss <- S_ij(omegas, 1, 2, ws, Sigmas, mus, thetas, phis)
+  
+  p1 <- ggplot() +
+    aes(x = taus) +
+    geom_vline(xintercept = 0, linetype = "dashed", alpha = 0.5) +
+    geom_line(aes(y = Re(ks), colour = "Re")) +
+    geom_line(aes(y = Im(ks), colour = "Im")) +
+    labs(title = "Covariance",
+         x = TeX("$\\tau$"), y = TeX("$k(\\tau)$"), colour = "") +
+    scale_colour_manual(values = c("Re" = "purple", "Im" = "orange"))
+  
+  p2 <- ggplot() +
+    aes(x = omegas) +
+    geom_vline(xintercept = 0, linetype = "dashed", alpha = 0.5) +
+    geom_line(aes(y = Re(Ss), colour = "Re")) +
+    geom_line(aes(y = Im(Ss), colour = "Im")) +
+    labs(title = "Spectral Density", 
+         x = TeX("$\\omega$"), y = TeX("$S(\\omega)$"), colour = "") +
+    scale_colour_manual(values = c("Re" = "blue", "Im" = "red"))
+  
+  p1 + p2
+}
+```
+
+## $\theta_{ij} = 0$, $\phi_{ij} = 0$
+
+- PSD is symmetrical, positive real-valued
+- Kernel is real-valued, symmetrical, centred on zero
+
+```{r}
+ws <- c(1,1)
+mus <- c(3,3)
+Sigmas <- c(1.0, 1.0)
+
+thetas <- c(0, 0)
+phis <- c(0, 0)
+
+tau_inc <- 1/20
+taus <- seq(from = -10, to = 10, by = tau_inc)
+
+plot_ktau_Somega(taus, ws, Sigmas, mus, thetas, phis)
+```
+
+### Numerical inverse-FFT
+
+The finite sampling of the signal introduces "fringes" or "oscillations". The overall envelope matches the shape that's anticipated by the analytical solution.
+
+$$k_{ij}(\tau) = \mathcal{F}^{-1}\{S_{ij}(\omega)\}(\tau)$$
+```{r}
+omegas <- ( seq_along(taus)-(length(taus)/2) ) * (1/(tau_inc * length(taus)))
+Ss <- S_ij(omegas, 1, 2, ws, Sigmas, mus, thetas, phis)
+
+Ss_ifft <- ifftshift( fft(Ss, inverse = TRUE)/length(Ss) )
+
+ggplot() +
+  aes(x = taus) +
+  geom_vline(xintercept = 0, linetype = "dashed", alpha = 0.5) +
+  geom_line(aes(y = Re(Ss_ifft), colour = "Re")) +
+  geom_line(aes(y = Im(Ss_ifft), colour = "Im")) +
+  labs(title = TeX("$F^{-1}\\, [ S_{ij}(\\omega) ] $"),
+       x = TeX("$\\tau$"), y = TeX("$k(\\tau)$"), colour = "") +
+  scale_colour_manual(values = c("Re" = "purple", "Im" = "orange")) +
+  xlim(c(-2,2))
+
+```
+
+$$S_{ij}(\omega) = \mathcal{F}\{k_{ij}(\tau)\}$$
+
+```{r}
+ks <- k_ij(taus, 1, 2, ws, Sigmas, mus, thetas, phis)
+ks_fft <- fftshift( fft(ks) )
+
+ggplot() +
+    aes(x = omegas) +
+    geom_vline(xintercept = 0, linetype = "dashed", alpha = 0.5) +
+    geom_line(aes(y = Re(ks_fft), colour = "Re"), alpha = 0.5) +
+    geom_line(aes(y = Im(ks_fft), colour = "Im"), alpha = 0.5) +
+    labs(title = TeX("$F\\, [ k_{ij}(\\tau) ] $"),
+         x = TeX("$\\omega$"), y = TeX("$S(\\omega)$"), colour = "") +
+    scale_colour_manual(values = c("Re" = "blue", "Im" = "red")) +
+  xlim(c(-5,5))
+```
+
+```{r}
+ggplot() +
+    aes(x = omegas) +
+    geom_vline(xintercept = 0, linetype = "dashed", alpha = 0.5) +
+    geom_line(aes(y = abs(ks_fft)^2)) +
+    labs(x = TeX("$\\omega$"), y = TeX("$|S(\\omega)|^2$")) 
+```
+
+## $\theta_{ij} = 0$, $\phi_{ij} != 0$
+
+- PSD is symmetrical, positive-valued, complex-valued
+- Kernel is non-symmetrical, real-valued, centred on zero
+
+```{r}
+thetas <- c(0, 0)
+phis <- c(0, -1)
+
+plot_ktau_Somega(taus, ws, Sigmas, mus, thetas, phis)
+```
+
+# $\theta_{ij} != 0$, $\phi_{ij} = 0$
+
+- PSD is symmetrical, complex-valued
+- Kernel is symmetrical, real-valued, not centred on zero
+
+```{r}
+thetas <- c(0, -1)
+phis <- c(0, 0)
+
+plot_ktau_Somega(taus, ws, Sigmas, mus, thetas, phis)
+```
+
+# $\theta_{ij} != 0$, $\phi_{ij} = 0$
+
+- PSD is symmetrical, complex-valued
+- Kernel is non-symmetrical, real-valued, not centred on zero
+
+```{r}
+thetas <- c(0, -1)
+phis <- c(0, -1)
+
+plot_ktau_Somega(taus, ws, Sigmas, mus, thetas, phis)
+```
+
+
+# Multi-output Spectral Mixture Kernel
+
+The MOSM kernel has the form (Definition 5; Parra & Tobar 2017):
+
+$$k_{ij}(\tau) = \sum_{q=1}^Q \alpha^{(q)}_{ij} \exp \left( -\frac{1}{2} (\tau + \theta^{(q)}_{ij})^\top \Sigma^{(q)}_{ij}(\tau + \theta^{(q)}_{ij}) \right) \cos \left( (\tau + \theta^{(q)}_{ij})^\top \mu^{(q)}_{ij} + \phi^{(q)}_{ij} \right), \qquad \alpha^{(q)}_{ij} = w^{(q)}_{ij} (2\pi)^{n/2} | \Sigma^{(q)}_{ij} |^{1/2} $$
+
+- No. of spectral mixture components: $Q$
+- parameter of $q$ th mixture component: $(.)^{(q)}$
