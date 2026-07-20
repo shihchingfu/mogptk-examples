@@ -20,9 +20,11 @@ register_knitr_engine(override = FALSE)
 theme_set(theme_bw())
 color_scheme_set("viridis") # bayesplot
 
-EXECUTE_SAMPLING <- TRUE
-SEED <- round(runif(n = 1, 0, 999))
-SEED 
+EXECUTE_SAMPLING <- FALSE
+
+SEED <- ifelse(EXECUTE_SAMPLING,
+               round(runif(n = 1, 0, 999)),
+               189)
 ```
 
 # Data
@@ -31,8 +33,21 @@ For a generic sinusoid:
 
 $$y(t) = \textrm{A} \sin \left(2 \pi f [t - \theta] + \phi\right)$$
 
-$$f_1 \sim \mathcal{N}(2.0 \sin(2\pi(0.7)[t - 0.0] + 0.0), 0.15^2)$$
-$$f_2 \sim \mathcal{N}(2.0 \sin(2\pi (0.7)[t - 0.4] + 0.0), 0.15^2)$$
+For $A = 2.0$, $f = 0.7$, $\theta_1 = 0$, and $\phi_1 = 0$:
+
+$$
+f_1 \sim \mathcal{N}(2.0 \sin(2\pi(0.7)[t - 0.0] + 0.0), 0.25^2) \\
+f_1 \sim \mathcal{N}(2.0 \sin(4.40t), 0.25^2) 
+$$
+
+For $A = 2.0$, $f = 0.7$, $\theta_2 = 0.4$, and $\phi_1 = 0$:
+
+$$
+f_2 \sim \mathcal{N}(2.0 \sin(2\pi (0.7)[t - 0.4] + 0.0), 0.25^2) \\
+f_2 \sim \mathcal{N}(2.0 \sin(2\pi[0.7t - 0.28]), 0.25^2) \\
+f_2 \sim \mathcal{N}(2.0 \sin(4.40t - 1.76), 0.25^2) \\
+f_2 \sim \mathcal{N}(2.0 \sin(4.40[t - 0.4]), 0.25^2)
+$$
 
 ```{r}
 D <- 2
@@ -179,7 +194,7 @@ output$summary(variables = vars,
 
 ```{r}
 output_draws_df <- output$draws(variables = vars, format = "df") |> 
-  subset_draws(chain = c(1,5)) 
+  subset_draws(chain = 1:4) 
 
 output_draws_df |> 
   summary(posterior::default_convergence_measures())
@@ -298,7 +313,7 @@ output_draws_df |>
 
 ```{r}
 output_draws_df |> 
-  mcmc_pairs(pars = c("Sigma[1]", "Sigma[2]"), off_diag_fun = "hex")
+  mcmc_pairs(pars = c("Sigma[1]", "Sigma[2]", "theta[1]", "theta[2]"), off_diag_fun = "hex")
 ```
 
 ```{r}
@@ -327,7 +342,6 @@ post_pred_samples <- post_pred_samples_wide |>
                names_pattern = "([0-9]+)") |> 
   cbind(t = star_df$t_star,
         d = factor(star_df$d_star))
-
 ```
 
 ```{r}
@@ -342,9 +356,9 @@ post_pred_samples |>
 ```
 
 ```{r}
-valid_postpred_sample_ids <- post_pred_samples_wide |> 
-  filter(.chain %in% c(1,5)) |> 
-  pull(sample)
+valid_postpred_sample_ids <- post_pred_samples |> 
+  filter(!is.na(value)) |> 
+  distinct(sample)
 valid_postpred_sample_ids
 ```
 
@@ -353,7 +367,13 @@ str(output_draws_df)
 ```
 
 ```{r}
+summary(output_draws_df)
+```
+
+
+```{r}
 paste0("frequency = ", frequency)
+paste0("period = ", 1/frequency)
 paste0("omega = ", omega)
 paste0("amplitude = ", amplitude)
 paste0("delay = ", delay)
@@ -383,5 +403,17 @@ output_draws_df |>
 
 ```{r}
 quantile(output_draws_df$deltaTheta)
+```
+
+$$f_1 (t) = 2.0 \sin(2\pi\cdot0.7 \cdot t)$$
+
+$$f_2(t) = 2.0 \sin(2\pi \cdot 0.7\cdot[t - 0.4])$$
+
+```{r}
+(pt_est <- median(output_draws_df$deltaTheta))
+```
+
+```{r}
+pt_est %% (2*pi)
 ```
 
