@@ -1,0 +1,172 @@
+---
+title: "Realisations of MOSM GP"
+format: 
+  html:
+    embed-resources: true
+---
+
+```{r}
+library(ggplot2)
+library(readr)
+library(dplyr)
+library(glue)
+library(mvtnorm)
+library(pracma)
+library(here)
+```
+
+The purpose of this notebook is to generate draws from a multi-output spectral mixture Gaussian process with known hyperparameter values:
+
+- $w_i$: magnitude/weight
+- $\Sigma_i$: spectral width/variance
+- $\mu_i$: spectral frequency/mean
+- $\theta_i$: delay
+- $\phi_i$: phase
+
+```{r}
+# Cross-covariance between x in band i and x' in band j
+k_ij <- function(x, x_prime, w_ij, Sigma_ij, mu_ij, theta_ij, phi_ij) {
+  alpha_ij <- w_ij * (2.0*pi)^(1/2.0) * sqrt(abs(Sigma_ij))
+  tau <- abs(x - x_prime)
+  
+  return( alpha_ij * 
+            exp(-0.5 * (tau + theta_ij)^2 * Sigma_ij) * 
+            cos((tau + theta_ij) * mu_ij + phi_ij) )
+}
+
+# Autocovariance between x and x' within band i
+k_ii <- function(x, x_prime, w_i, Sigma_i, mu_i) {
+  alpha_ii <- w_i^2.0 * (2.0*pi)^(1/2.0) * sqrt(abs(Sigma_i))
+  tau <- abs(x - x_prime)
+  
+  return( alpha_ii * exp(-0.5*tau^2 * Sigma_i) * cos(tau*mu_i) )
+}
+
+# the n x n' covariance matrix between elements _x_ in band i and elements _x'_ in band j
+K_ij <- function(xs, xs_prime, i, j, ws, Sigmas, mus, thetas, phis) {
+  
+  n <- length(xs)
+  n_prime <- length(xs_prime)
+  
+  Kij <- matrix(NA, nrow = n, ncol = n_prime)
+  
+  for (r in 1:n) {
+    for (c in 1:n_prime) {
+      if (i == j) {
+        Kij[r,c] <- k_ii(xs[r], xs_prime[c], ws[i], Sigmas[i], mus[i])
+      }
+      else {
+        w_ij <- ws[i]*ws[j] * exp( -1.0/4*(mus[i]-mus[j]) * (Sigmas[i]+Sigmas[j])^-1 * (mus[i]-mus[j]) )
+        Sigma_ij <- 2*Sigmas[i] * (Sigmas[i] + Sigmas[j])^-1 * Sigmas[j]
+        mu_ij <- (Sigmas[i] + Sigmas[j])^-1 * (Sigmas[i]*mus[j] + Sigmas[j]*mus[i])
+        theta_ij <- thetas[i] - thetas[j]
+        phi_ij <- phis[i] - phis[j]
+
+        Kij[r,c] = k_ij(xs[r], xs_prime[c], w_ij, Sigma_ij, mu_ij, theta_ij, phi_ij)
+      }
+    }
+  }
+  return(Kij)
+}
+
+# the cross-covariance matrix between the D bands comprising a D x D arrangement
+# of covariance matrices between i and j bands.
+K_mat <- function(x, x_star, d, d_star, D, ws, Sigmas, mus, thetas, phis) {
+ 
+  N <- length(x)
+  N_star <- length(x_star)
+  
+  Kmat <- matrix(NA, nrow = N, ncol = N_star)
+  
+  mgrid <- meshgrid(d, d_star)
+  
+  r_grid <- mgrid$Y
+  c_grid <- mgrid$X
+  
+  for (r in 1:D) {
+    for (c in r:D) {
+      
+      r_indices <- which(d == r)
+      c_indices <- which(d_star == c)
+      
+      xs <- x[r_indices]
+      xs_prime <- x_star[c_indices]
+      
+      K_rc <- K_ij(xs, xs_prime, r, c, ws, Sigmas, mus, thetas, phis)
+      
+      Kmat[r_grid == r & c_grid == c] <- K_rc
+    }
+  }
+  
+  for (ii in 1:N) {
+    for (jj in 1:N_star) {
+      Kmat[jj,ii] <- Kmat[ii,jj]
+    }
+  }
+  
+  return(Kmat)
+}
+
+# Simulate a draw from an MOGP
+simulate_mogp <- function(D, Q, ns = 100, noise_sigma = 0.25, seed) {
+  
+  xs <- rep( seq(from = 0, to = 1, length.out = ns), times = D)
+  ds <- rep(1:D, each = ns)
+  N <- length(xs)
+  
+  set.seed(seed)
+  
+  ws <-     round( abs( rnorm(D, mean = 0, sd = 5.0) ), 2 )
+  Sigmas <- round( abs( rnorm(D, mean = 0, sd = 5.0) ), 2 )
+  mus <-    round( sort( rnorm(D, mean = 0, sd = 5.0) ), 2 )
+  thetas <- round( rnorm(D, mean = 0, sd = 5.0), 2 )
+  phis <-   rep(0.0, D)
+  
+  KK <- K_mat(xs, xs, ds, ds, D, ws, Sigmas, mus, thetas, phis)
+  
+  set.seed(seed)
+  output_df <- data.frame(
+    t = xs,
+    f = c(rmvnorm(1, sigma = KK)),
+    y = rep(NA, N),
+    y_se = rep(noise_sigma, N),
+    d = factor(ds)
+  ) |> 
+    mutate(y = f + rnorm(length(xs), mean = 0, sd = noise_sigma))
+  
+  cat("Seed =", SEED)
+  cat("\nws =", ws)
+  cat("\nSigmas =", Sigmas)
+  cat("\nmus =", mus)
+  cat("\nthetas =", thetas)
+  cat("\nphis =", phis)
+  
+  return(output_df)
+}
+
+```
+
+```{r}
+D <- 4
+Q <- 1
+num_points <- 100
+noise_sigma <- 0.25
+
+SEED <- 2042 # round(runif(1, min = 0, max = 9999))
+
+output_df <- simulate_mogp(D, Q, num_points, noise_sigma, seed = SEED)
+
+output_df |> 
+  ggplot() +
+  aes(x = t, y = y, colour = d) +
+  geom_line() +
+  labs(title = paste("Seed =", SEED))
+```
+
+```{r}
+output_filename <- glue("D{D}-Q{Q}-seed{SEED}-sim-mogp.csv")
+write_csv(output_df, here("data", output_filename))
+```
+
+
+

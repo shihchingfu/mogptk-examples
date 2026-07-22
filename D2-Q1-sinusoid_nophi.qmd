@@ -90,9 +90,9 @@ build_dataset <- function() {
 }
 
 full_df <- build_dataset()
-input_df <- full_df |> filter(!masked)
+input_df <- full_df |> filter(!masked) |> select(-masked)
 
-write_csv(input_df, "mcar_sinusoid.csv")
+write_csv(input_df, "data/D2-sim-sinusoid.csv")
 
 ns <- table(input_df$d)
 ns
