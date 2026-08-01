@@ -45,7 +45,7 @@ output_df |>
 ```
 
 ```{r}
-output_filename <- glue("D{D}-Q{Q}-seed{SEED}-mogp-mcar{pct_missing}-sigma{noise_sigma}-sim.csv")
+output_filename <- glue("D{D}-Q{Q}-seed{SEED}-mcar{pct_missing}-sigma{noise_sigma}-sim.csv")
 write_csv(
   output_df |>
     filter(!masked) |> 
