@@ -30,18 +30,45 @@ The purpose of this notebook is to generate draws from a multi-output spectral m
 D <- 2
 Q <- 1
 num_points <- 100
-noise_sigma <- 0.4
+
+SEED <- round(runif(1, min = 0, max = 9999))
 pct_missing <- 0.5
+noise_sigma <- 0.2
 
-SEED <- 5672 #round(runif(1, min = 0, max = 9999))
+i <- 1
+while(i <= 20) {
+  tryCatch(
+    {
+      output <- simulate_mogp(D, Q, num_points, noise_sigma, seed = SEED, masked_pct = pct_missing)
+      break
+    },
+    warning = function(cnd) {
+      cat("Warning:", i, "Seed:", SEED, conditionMessage(cnd), "\n")
+    },
+    finally = {
+      i <- i + 1
+    }
+  )
+}
+cat("i =",i,"\n")
 
-output_df <- simulate_mogp(D, Q, num_points, noise_sigma, seed = SEED, masked_pct = pct_missing)
+```
 
+```{r}
+output_params <- output[[1]]
+output_df <- output[[2]]
+
+output_params
+```
+
+
+```{r}
 output_df |> 
   ggplot() +
   aes(x = t, y = y, alpha = ifelse(masked, 0.2, 1), colour = d) +
   geom_point() +
-  labs(title = paste("Seed =", SEED), alpha = "Observed", colour = "Band")
+  labs(title = paste("Seed =", output_params$seed), alpha = "Observed", colour = "Band") +
+  theme(legend.position = "none")
 ```
 
 ```{r}

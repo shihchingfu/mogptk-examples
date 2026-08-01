@@ -153,10 +153,10 @@ simulate_mogp <- function(D, Q, ns = 100, noise_sigma = 0.25, masked_pct = 0.2, 
   set.seed(seed)
 
   ws <-     round( abs( rnorm(D, mean = 0, sd = 5.0) ), 2 )
-  Sigmas <- round( abs( rnorm(D, mean = 0, sd = 5.0) ), 2 )
-  mus <-    round( sort( rnorm(D, mean = 0, sd = 5.0) ), 2 )
-  thetas <- round( rnorm(D, mean = 0, sd = 5.0), 2 )
-  phis <-   rep(0.0, D)
+  Sigmas <- round( abs( rnorm(D, mean = 0, sd = 1.0) ), 2 )
+  mus <-    round( abs( rnorm(D, mean = 0, sd = 10.0) ), 2 )
+  thetas <- round( runif(D, min = -1, max = 1), 2 )
+  phis <-   round( runif(D, min = -1, max = 1), 2 )
 
   KK <- Kxx_mat(xs, D, rep(ns, D), ws, Sigmas, mus, thetas, phis)
 
@@ -171,14 +171,17 @@ simulate_mogp <- function(D, Q, ns = 100, noise_sigma = 0.25, masked_pct = 0.2, 
   ) |>
     mutate(y = f + rnorm(length(xs), mean = 0, sd = noise_sigma))
 
-  cat("Seed =", seed)
-  cat("\nws =", ws)
-  cat("\nSigmas =", Sigmas)
-  cat("\nmus =", mus)
-  cat("\nthetas =", thetas)
-  cat("\nphis =", phis)
 
-  return(output_df)
+  params = list(
+    seed = seed,
+    w = ws,
+    Sigma = Sigmas,
+    mu = mus,
+    theta = thetas,
+    phi = phis
+  )
+
+  return(list(params, output_df))
 }
 
 # Generate a single variate
