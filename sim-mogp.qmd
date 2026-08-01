@@ -31,7 +31,6 @@ D <- 2
 Q <- 1
 num_points <- 100
 
-SEED <- round(runif(1, min = 0, max = 9999))
 pct_missing <- 0.5
 noise_sigma <- 0.2
 
@@ -39,6 +38,7 @@ i <- 1
 while(i <= 20) {
   tryCatch(
     {
+      SEED <- round(runif(1, min = 0, max = 99999))
       output <- simulate_mogp(D, Q, num_points, noise_sigma, seed = SEED, masked_pct = pct_missing)
       break
     },
@@ -50,7 +50,7 @@ while(i <= 20) {
     }
   )
 }
-cat("i =",i,"\n")
+cat("i =",i-1, "Seed =", SEED, "\n")
 
 ```
 

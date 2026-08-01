@@ -154,7 +154,7 @@ simulate_mogp <- function(D, Q, ns = 100, noise_sigma = 0.25, masked_pct = 0.2, 
 
   ws <-     round( abs( rnorm(D, mean = 0, sd = 5.0) ), 2 )
   Sigmas <- round( abs( rnorm(D, mean = 0, sd = 1.0) ), 2 )
-  mus <-    round( abs( rnorm(D, mean = 0, sd = 10.0) ), 2 )
+  mus <-    round( abs( rnorm(D, mean = 1, sd = 5.0) ), 2 )
   thetas <- round( runif(D, min = -1, max = 1), 2 )
   phis <-   round( runif(D, min = -1, max = 1), 2 )
 
