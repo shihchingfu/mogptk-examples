@@ -31,8 +31,8 @@ D <- 2
 Q <- 1
 num_points <- 100
 
-pct_missing <- 0.5
-noise_sigma <- 0.2
+pct_missing <- 0.2
+noise_sigma <- 0.1
 
 i <- 1
 while(i <= 20) {
@@ -52,15 +52,11 @@ while(i <= 20) {
 }
 cat("i =",i-1, "Seed =", SEED, "\n")
 
-```
-
-```{r}
 output_params <- output[[1]]
 output_df <- output[[2]]
 
 output_params
 ```
-
 
 ```{r}
 output_df |> 
@@ -72,12 +68,22 @@ output_df |>
 ```
 
 ```{r}
-output_filename <- glue("D{D}-Q{Q}-seed{SEED}-mcar{pct_missing}-sigma{noise_sigma}-sim.csv")
+output_filename_stub <- glue("D{D}-Q{Q}-seed{SEED}-n{num_points}-mcar{pct_missing}-sigma{noise_sigma}")
+
+df_output_filename <- glue("{output_filename_stub}-sim.csv")
+param_output_filename <- glue("{output_filename_stub}-param.tsv")
+
 write_csv(
   output_df |>
     filter(!masked) |> 
     select(-masked), 
-  here("data", output_filename))
+  here("data", df_output_filename)
+)
+
+write_tsv(
+  output_params, 
+  here("data", param_output_filename)
+)
 ```
 
 

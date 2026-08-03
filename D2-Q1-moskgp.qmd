@@ -1,0 +1,387 @@
+---
+title: "Fit MOSM GP to toy example"
+format: 
+  html:
+    embed-resources: true
+---
+
+This notebook contains the workflow for:
+
+- loading groundtruth multiband (MOGP) time-series, 
+- fitting a MOGP model, 
+- checking which posterior draws produce valid covariance matrices, and 
+- visualing the posteriors of the valid draws.
+
+```{r setup}
+library(here)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(cmdstanr)
+library(posterior)
+library(bayesplot)
+library(readr)
+library(glue)
+library(tictoc)
+
+register_knitr_engine(override = FALSE)
+
+theme_set(theme_bw())
+color_scheme_set("viridis") # bayesplot
+
+source(here("mogp-utils.R"))
+
+filename_stub <- "D2-Q1-seed44791-n100-mcar0.2-sigma0.1"
+
+EXECUTE_SAMPLING <- TRUE
+SAMPLING_SEED <- ifelse(EXECUTE_SAMPLING,
+               round(runif(n = 1, 0, 999)),
+               644)
+```
+
+```{r}
+D <- 2
+Q <- 1
+
+input_df <- read_csv(
+  here("data", glue("{filename_stub}-sim.csv")), 
+  show_col_types = FALSE)
+
+input_params <- read_tsv(
+  here("data", glue("{filename_stub}-param.tsv")), 
+  show_col_types = FALSE)
+
+input_df |> 
+  ggplot() +
+  aes(x = t, y = y, colour = factor(d)) +
+  geom_linerange(aes(ymax = y + y_se, ymin = y - y_se), colour = "black") +
+  geom_point() +
+  geom_line(aes(y = f), alpha = 0.8) +
+  #facet_grid(rows = vars(d), scales = "fixed") +
+  labs(colour = "Band")
+
+ns <- table(input_df$d)
+```
+
+```{r}
+input_params
+```
+
+
+# Model Fitting
+
+```{r}
+mosmgp_nophi_stan <- cmdstan_model(here("stan", "moskgp.stan"))
+```
+
+```{r}
+SAMPLING_SEED
+```
+
+## Sampling
+
+```{r}
+data_list <- list(
+  D = D,
+  N = NROW(input_df),
+  ns = ns,
+  d = input_df$d,
+  x = input_df$t,
+  y = input_df$y,
+  y_se = input_df$y_se
+)
+```
+
+```{r}
+format(start_time <- Sys.time())
+```
+
+```{r}
+if (EXECUTE_SAMPLING) {
+  
+  output <- mosmgp_nophi_stan$sample(
+    data = data_list,
+    seed = SAMPLING_SEED,
+    chains = 6,
+    parallel_chains = 6,
+    iter_warmup = 200,
+    iter_sampling = 500,
+    refresh = 100,
+    show_exceptions = FALSE,
+    show_messages = TRUE
+  )
+  
+  output$save_object(here("RDS", glue("{filename_stub}_draws{SAMPLING_SEED}_mogp.RDS")))
+  
+} else {
+  output <- readRDS(here("RDS", glue("{filename_stub}_draws{SAMPLING_SEED}_mogp.RDS")))
+}
+```
+
+```{r}
+format(finish_time <- Sys.time())
+difftime(finish_time, start_time)  
+```
+
+# Results
+
+```{r}
+vars <- c("w", "Sigma", "mu", "theta", "phi", "deltaTheta")
+output$summary(variables = vars, 
+               posterior::default_convergence_measures())
+```
+
+```{r}
+mcmc_trace(output$draws(vars))
+```
+
+
+```{r}
+valid_chains <- c(1:6)
+output_draws <- output$draws(variables = vars, format = "df") |> 
+  subset_draws(chain = valid_chains)
+
+output_draws |> 
+  summary(posterior::default_convergence_measures())
+```
+
+```{r}
+output_draws |> mcmc_trace()
+```
+
+
+## Posterior Predictive Check
+
+### Target locations
+
+```{r}
+n_star <- 100 # in each band
+N_star <- n_star * D
+ns_star = rep(n_star, D)
+
+star_df <- data.frame(
+  t_star = rep(seq(from = 0, to = 1, length.out = n_star), D),
+  d_star = as.integer(rep(1:D, each = n_star))
+)
+```
+
+```{r}
+# Draw posterior predictive samples using the posterior means
+posterior_means <- as.data.frame(output_draws) |> 
+  select(`w[1]`:deltaTheta) |> 
+  colMeans()
+posterior_means
+```
+
+```{r eval=FALSE}
+mean_ws <- posterior_means[1:2]
+mean_Sigmas <- posterior_means[3:4]
+mean_mus <- posterior_means[5:6]
+mean_thetas <- posterior_means[7:8]
+mean_phis <- posterior_means[9:10]
+
+n_draws <- 20
+
+mean_draws <- postpred_draws(
+  n_draws = n_draws,
+  x = input_df$t, 
+  y = input_df$y, 
+  y_se = input_df$y_se, 
+  d = input_df$d, 
+  D = D, 
+  ns = ns, 
+  x_star = star_df$t_star, 
+  d_star = star_df$d_star, 
+  ns_star = ns_star, 
+  mean_ws,
+  mean_Sigmas,
+  mean_mus,
+  mean_thetas,
+  mean_phis
+)
+
+ggplot() +
+  geom_line(data = mean_draws, 
+            aes(x = x_star, y = f_star, 
+                colour = d_star,
+                group = interaction(d_star,.draw)), alpha = 0.4) +
+  geom_point(data = input_df, aes(x = t, y = y), size = 1) 
+```
+
+
+```{r}
+# Draw posterior predictive samples using a particular posterior draw
+r <- 601
+output_draws_mat <- output_draws |> as.matrix()
+this_w <- output_draws_mat[r, 1:2]
+this_Sigma <- output_draws_mat[r, 3:4]
+this_mu <- output_draws_mat[r, 5:6]
+this_theta <- output_draws_mat[r, 7:8]
+this_phi <- output_draws_mat[r, 9:10]
+
+pp_draws <- postpred_draws(
+  n_draws = 10,
+  x = input_df$t, 
+  y = input_df$y, 
+  y_se = input_df$y_se, 
+  d = input_df$d, 
+  D = D, 
+  ns = ns, 
+  x_star = star_df$t_star, 
+  d_star = star_df$d_star, 
+  ns_star = ns_star, 
+  this_w,
+  this_Sigma,
+  this_mu,
+  this_theta,
+  this_phi
+)
+
+ggplot() +
+  geom_line(data = pp_draws, 
+            aes(x = x_star, y = f_star, 
+                colour = d_star,
+                group = interaction(d_star,.draw)), alpha = 0.4) +
+  geom_point(data = input_df, aes(x = t, y = y, colour = factor(d)), size = 1) 
+```
+
+
+```{r}
+tic()
+outputs <- postpred_valid_draws(
+  x = input_df$t, 
+  y = input_df$y, 
+  y_se = input_df$y_se, 
+  d = input_df$d, 
+  D = D, 
+  ns = ns, 
+  x_star = star_df$t_star, 
+  d_star = star_df$d_star, 
+  ns_star = ns_star, 
+  ws = output_draws_mat[,1:2],
+  Sigmas = output_draws_mat[,3:4],
+  mus = output_draws_mat[,5:6],
+  thetas = output_draws_mat[,7:8],
+  phis = output_draws_mat[,9:10],
+)
+toc()
+
+write_rds(outputs, here("RDS", glue("{filename_stub}_draws{SAMPLING_SEED}_valid.RDS")))
+
+```
+
+```{r}
+str(outputs)
+
+valid_postpred_draws <- outputs[[1]]
+valid_postpred_idx <- which(outputs[[2]])
+
+str(valid_postpred_idx)
+```
+
+```{r}
+ggplot() +
+  geom_line(data = valid_postpred_draws, aes(x = x_star, y = f_star, 
+      colour = d_star,
+      group = interaction(.draw,d_star))) +
+  geom_point(data = input_df, aes(x = t, y = y), size = 1) 
+
+```
+
+## Hyperparameter Posteriors
+
+```{r}
+valid_draws_df <- output$draws(variables = vars, format = "df") |> 
+  subset_draws(chain = valid_chains) |> 
+  as.data.frame() |> 
+  slice(valid_postpred_idx)
+
+sapply(valid_draws_df[,1:11], mean)
+```
+
+```{r}
+# Function estimates the mode of a sample
+estimate_mode <- function(x) {
+  d <- density(x, n = 2^10)
+  d$x[which.max(d$y)]
+}
+
+sapply(valid_draws_df[,1:11], estimate_mode)
+```
+
+```{r}
+input_params
+diff(input_params$theta)
+```
+
+
+```{r}
+valid_draws_df |> 
+  select(.draw, starts_with("w")) |> 
+  pivot_longer(2:3) |> 
+  drop_na(value) |> 
+  ggplot() +
+  aes(x = value) +
+  geom_histogram() +
+  facet_wrap(vars(name), scales = "free_y")
+```
+
+```{r}
+valid_draws_df |> 
+  select(.draw, starts_with("Sigma")) |> 
+  pivot_longer(2:3) |> 
+  drop_na(value) |> 
+  ggplot() +
+  aes(x = value) +
+  geom_histogram() +
+  facet_wrap(vars(name), scales = "free_y")
+```
+
+```{r}
+valid_draws_df |> 
+  select(.draw, starts_with("mu")) |> 
+  pivot_longer(2:3) |> 
+  drop_na(value) |> 
+  ggplot() +
+  aes(x = value) +
+  geom_histogram() +
+  facet_wrap(vars(name), scales = "free")
+```
+
+```{r}
+valid_draws_df |> 
+  select(.draw, starts_with("theta")) |> 
+  pivot_longer(2:3) |> 
+  drop_na(value) |> 
+  ggplot() +
+  aes(x = value) +
+  geom_histogram() +
+  facet_wrap(vars(name), scales = "free_y")
+```
+
+```{r}
+valid_draws_df |> 
+  select(.draw, starts_with("phi")) |> 
+  pivot_longer(2:3) |> 
+  drop_na(value) |> 
+  ggplot() +
+  aes(x = value) +
+  geom_histogram() +
+  facet_wrap(vars(name), scales = "free_y")
+```
+
+```{r}
+valid_draws_df |> 
+  pivot_longer(cols = c(`theta[1]`, `theta[2]`), names_to = "Parameter") |> 
+  ggplot() +
+  aes(x = value, fill = Parameter) +
+  geom_histogram(position = "identity", bins = 50, alpha = 0.5)
+```
+
+```{r}
+valid_draws_df |> 
+  ggplot() +
+  aes(x = deltaTheta) +
+  geom_histogram(bins = 30) 
+```
+

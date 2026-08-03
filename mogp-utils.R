@@ -2,20 +2,28 @@ library(mvtnorm)
 
 # Cross-covariance between x in band i and x' in band j
 k_ij <- function(x, x_prime, w_ij, Sigma_ij, mu_ij, theta_ij, phi_ij) {
-  alpha_ij <- w_ij * (2.0*pi)^(1/2.0) * sqrt(abs(Sigma_ij))
   tau <- abs(x - x_prime)
+  alpha_ij <- w_ij * sqrt( 2.0*pi * abs(Sigma_ij) )
 
-  return( alpha_ij *
-            exp(-0.5 * (tau + theta_ij)^2 * Sigma_ij) *
-            cos((tau + theta_ij) * mu_ij + phi_ij) )
+  return(
+    alpha_ij *
+      exp(-0.5 * (tau + theta_ij)^2 * Sigma_ij) *
+      cos(2*pi*(tau + theta_ij) * mu_ij + phi_ij)
+    #cos((tau + theta_ij) * mu_ij + phi_ij)
+  )
 }
 
 # Autocovariance between x and x' within band i
 k_ii <- function(x, x_prime, w_i, Sigma_i, mu_i) {
-  alpha_ii <- w_i^2.0 * (2.0*pi)^(1/2.0) * sqrt(abs(Sigma_i))
   tau <- abs(x - x_prime)
+  alpha_ii <- w_i^2.0 * sqrt( 2.0*pi * abs(Sigma_i) )
 
-  return( alpha_ii * exp(-0.5*tau^2 * Sigma_i) * cos(tau*mu_i) )
+  return(
+    alpha_ii *
+      exp(-0.5*tau^2 * Sigma_i) *
+      cos(2*pi*tau*mu_i)
+    #cos(tau*mu_i)
+  )
 }
 
 # the n x n' covariance matrix between elements _x_ in band i and elements _x'_ in band j
@@ -32,7 +40,8 @@ K_ij <- function(xs, xs_prime, i, j, ws, Sigmas, mus, thetas, phis) {
         Kij[r,c] <- k_ii(xs[r], xs_prime[c], ws[i], Sigmas[i], mus[i])
       }
       else {
-        w_ij <- ws[i]*ws[j] * exp( -1.0/4*(mus[i]-mus[j]) * (Sigmas[i]+Sigmas[j])^-1 * (mus[i]-mus[j]) )
+        #w_ij <- ws[i]*ws[j] * exp( -1.0/4*(mus[i]-mus[j]) * (Sigmas[i]+Sigmas[j])^-1 * (mus[i]-mus[j]) )
+        w_ij <- ws[i]*ws[j] * exp( -pi^2*(mus[i]-mus[j]) * (Sigmas[i]+Sigmas[j])^-1 * (mus[i]-mus[j]) )
         Sigma_ij <- 2*Sigmas[i] * (Sigmas[i] + Sigmas[j])^-1 * Sigmas[j]
         mu_ij <- (Sigmas[i] + Sigmas[j])^-1 * (Sigmas[i]*mus[j] + Sigmas[j]*mus[i])
         theta_ij <- thetas[i] - thetas[j]
@@ -144,7 +153,9 @@ K_mat_v2 <- function(xs, xs_star, ds, ds_star, D, ws, Sigmas, mus, thetas, phis)
 }
 
 # Simulate a draw from an MOGP
-simulate_mogp <- function(D, Q, ns = 100, noise_sigma = 0.25, masked_pct = 0.2, seed) {
+simulate_mogp <- function(D, Q = 1, ns = 100, noise_sigma = 0.25, masked_pct = 0.2,
+                          zero_phi = FALSE,
+                          seed) {
 
   xs <- rep( seq(from = 0, to = 1, length.out = ns), times = D)
   ds <- rep(1:D, each = ns)
@@ -152,11 +163,16 @@ simulate_mogp <- function(D, Q, ns = 100, noise_sigma = 0.25, masked_pct = 0.2, 
 
   set.seed(seed)
 
-  ws <-     round( abs( rnorm(D, mean = 0, sd = 5.0) ), 2 )
+  ws <-     round( abs( rnorm(D, mean = 0, sd = 1.0) ), 2 )
   Sigmas <- round( abs( rnorm(D, mean = 0, sd = 1.0) ), 2 )
-  mus <-    round( abs( rnorm(D, mean = 1, sd = 5.0) ), 2 )
-  thetas <- round( runif(D, min = -1, max = 1), 2 )
-  phis <-   round( runif(D, min = -1, max = 1), 2 )
+  mus <-    round( abs( rnorm(D, mean = 5, sd = 1.0) ), 2 )
+  thetas <- round( rnorm(D, mean = 0, sd = 1.0), 2 )
+
+  if (zero_phi) {
+    phis <- rep(0.0, D)
+  } else {
+    phis <- round( rnorm(D, mean = 0, sd = 1.0), 2 )
+  }
 
   KK <- Kxx_mat(xs, D, rep(ns, D), ws, Sigmas, mus, thetas, phis)
 
@@ -171,8 +187,7 @@ simulate_mogp <- function(D, Q, ns = 100, noise_sigma = 0.25, masked_pct = 0.2, 
   ) |>
     mutate(y = f + rnorm(length(xs), mean = 0, sd = noise_sigma))
 
-
-  params = list(
+  params_df = data.frame(
     seed = seed,
     w = ws,
     Sigma = Sigmas,
@@ -181,7 +196,7 @@ simulate_mogp <- function(D, Q, ns = 100, noise_sigma = 0.25, masked_pct = 0.2, 
     phi = phis
   )
 
-  return(list(params, output_df))
+  return(list(params_df, output_df))
 }
 
 # Generate a single variate
@@ -282,9 +297,10 @@ postpred_valid_draws <- function(
   pp_list <- vector("list", n_draws)
   valid_pps <- rep(FALSE, n_draws)
 
+  warning_count <- 0
+  error_count <- 0
+
   for (r in 1:n_draws) {
-    if (r %% 10 == 0)
-      cat(r,"of", n_draws,"\n")
 
     this_w <- ws[r,]
     this_Sigma <- Sigmas[r,]
@@ -292,14 +308,16 @@ postpred_valid_draws <- function(
     this_theta <- thetas[r,]
     this_phi <- phis[r,]
 
-    tryCatch(
+    return_string <- tryCatch(
       warning = function(cnd) {
-        cat("Warning:", r, conditionMessage(cnd), "\n")
+        #cat("Warning:", r, conditionMessage(cnd), "\n")
         pp_list[[r]] <- NA
+        return("warning")
       },
       error = function(cnd) {
-        cat("Error:", r, conditionMessage(cnd), "\n")
+        #cat("Error:", r, conditionMessage(cnd), "\n")
         pp_list[[r]] <- NA
+        return("error")
       },
       {
         new_draw <- postpred_draw(
@@ -324,10 +342,35 @@ postpred_valid_draws <- function(
         valid_pps[r] <- TRUE
       }
     )
+
+    if (return_string == "warning") {
+      warning_count <- warning_count + 1
+    } else if (return_string == "error") {
+      error_count <- error_count + 1
+    } else if (return_string == "valid") {
+
+    }
+
+    if (r %% 100 == 0) {
+      cat(
+        paste0(r,"/", n_draws,
+               ": Warnings = ", warning_count,
+               ", Errors = ", error_count,
+               ", Valid = ", r - warning_count - error_count,
+               "\n")
+      )
+    }
+
   }
 
   pp_df <- bind_rows(pp_list, .id = ".draw")
 
-  return( list(pp_df, valid_pps) )
+  cat(
+    paste0(
+      "Total draws: ", n_draws,
+      "\nTotal warnings: ", warning_count,
+      "\nTotal errors: ", error_count, "\n")
+  )
 
+  return( list(pp_df, valid_pps) )
 }
