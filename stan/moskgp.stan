@@ -14,7 +14,6 @@ functions {
       alpha_ij *
       exp(-0.5 * (tau + theta_ij)^2 * Sigma_ij) *
       cos( 2*pi() * (tau + theta_ij) * mu_ij + phi_ij )
-      // cos( (tau + theta_ij) * mu_ij + phi_ij )
     );
   }
   // Returns the autocovariance between x and x' within band i
@@ -30,7 +29,6 @@ functions {
       alpha_ii *
       exp(-0.5 * tau^2 * Sigma_i) *
       cos(2*pi() * tau * mu_i)
-      // cos(tau * mu_i);
     );
   }
   // Returns the cross-covariance matrix between locations x and x' in
@@ -57,7 +55,6 @@ functions {
           Kij[r,c] = k_ii(x[r], x_prime[c], ws[i], Sigmas[i], mus[i]);
         }
         else { // Cross-covariance matrix n_i x n_j
-          //real w_ij = ws[i]*ws[j] * exp( -1.0/4*(mus[i]-mus[j]) * (Sigmas[i]+Sigmas[j])^-1 * (mus[i]-mus[j]) );
           real w_ij = ws[i]*ws[j] * exp( -pi()^2*(mus[i]-mus[j]) * (Sigmas[i]+Sigmas[j])^-1 * (mus[i]-mus[j]) );
           real Sigma_ij = 2*Sigmas[i] * (Sigmas[i] + Sigmas[j])^-1 * Sigmas[j];
           real mu_ij = (Sigmas[i] + Sigmas[j])^-1 *
@@ -162,7 +159,4 @@ model {
     rep_vector(0, N),
     cholesky_decompose(add_diag(KS, epsilon))
   );
-}
-
-generated quantities {
 }
