@@ -1,33 +1,40 @@
 library(mvtnorm)
 
-# Cross-covariance between x in band i and x' in band j
-k_ij <- function(x, x_prime, w_ij, Sigma_ij, mu_ij, theta_ij, phi_ij) {
+# Returns the cross-covariance between scalar location x in band i and
+# scalar location x_prime in band j, conditioned on hyperparameter values.
+k_ij <- function(x, x_prime,
+                 w_ij, Sigma_ij, mu_ij, theta_ij, phi_ij) {
+
   tau <- abs(x - x_prime)
   alpha_ij <- w_ij * sqrt( 2.0*pi * abs(Sigma_ij) )
 
   return(
     alpha_ij *
       exp(-0.5 * (tau + theta_ij)^2 * Sigma_ij) *
-      cos(2*pi*(tau + theta_ij) * mu_ij + phi_ij)
-    #cos((tau + theta_ij) * mu_ij + phi_ij)
+      cos(2*pi*(tau + theta_ij) * mu_ij + phi_ij) # NB: 2*pi factor
   )
 }
 
-# Autocovariance between x and x' within band i
-k_ii <- function(x, x_prime, w_i, Sigma_i, mu_i) {
+# Returns the autocovariance between scalar location x and scalar location
+# x_prime within band i.
+k_ii <- function(x, x_prime,
+                 w_i, Sigma_i, mu_i) {
+
   tau <- abs(x - x_prime)
   alpha_ii <- w_i^2.0 * sqrt( 2.0*pi * abs(Sigma_i) )
 
   return(
     alpha_ii *
       exp(-0.5*tau^2 * Sigma_i) *
-      cos(2*pi*tau*mu_i)
-    #cos(tau*mu_i)
+      cos(2*pi*tau*mu_i) # NB: 2*pi factor
   )
 }
 
-# the n x n' covariance matrix between elements _x_ in band i and elements _x'_ in band j
-K_ij <- function(xs, xs_prime, i, j, ws, Sigmas, mus, thetas, phis) {
+# Returns a [n x n_prime] matrix containing the covariance between the elements
+# of the vector of locations x in band i with the elements of the vector of
+# locations x_prime in band j.
+K_ij <- function(xs, xs_prime, i, j,
+                 ws, Sigmas, mus, thetas, phis) {
 
   n <- length(xs)
   n_prime <- length(xs_prime)
@@ -54,8 +61,10 @@ K_ij <- function(xs, xs_prime, i, j, ws, Sigmas, mus, thetas, phis) {
   return(Kij)
 }
 
-# Square cross-covariance matrix of locations x with itself
-Kxx_mat <- function(x, D, n, ws, Sigmas, mus, thetas, phis) {
+# Returns a square cross-covariance matrix of elements of the vector of
+# locations x with itself in the same band.
+Kxx_mat <- function(x, D, n,
+                    ws, Sigmas, mus, thetas, phis) {
 
   end_idx <- cumsum(n)
   start_idx <- 1 + end_idx - n
@@ -85,16 +94,19 @@ Kxx_mat <- function(x, D, n, ws, Sigmas, mus, thetas, phis) {
 
   for (ii in 1:N) {
     for (jj in 1:N) {
-      Kxxmat[jj,ii] <- Kxxmat[ii,jj]
+      Kxxmat[jj,ii] <- Kxxmat[ii,jj] # enforce symmetry
     }
   }
 
   return(Kxxmat)
 }
 
-# the cross-covariance matrix between the D bands comprising a D x D arrangement
-# of covariance matrices between i and j bands.
-K_mat_v1 <- function(xs, xs_star, ds, ds_star, D, ws, Sigmas, mus, thetas, phis) {
+# Returns a [n x n_star] cross-covariance matrix between the D bands comprising
+# a D x D arrangement of covariance matrices of elements of the vector of
+# locations xs in band i with the elements of the vector of locations xs_star
+# in band j.
+K_mat <- function(xs, xs_star, ds, ds_star, D,
+                  ws, Sigmas, mus, thetas, phis) {
 
   N_rows <- length(xs)
   N_cols <- length(xs_star)
@@ -118,44 +130,13 @@ K_mat_v1 <- function(xs, xs_star, ds, ds_star, D, ws, Sigmas, mus, thetas, phis)
   return(Kmat)
 }
 
-
-# the cross-covariance matrix between the D bands comprising a D x D arrangement of covariance matrices between i and j bands.
-K_mat_v2 <- function(xs, xs_star, ds, ds_star, D, ws, Sigmas, mus, thetas, phis) {
-
-  N <- length(xs)
-  N_star <- length(xs_star)
-
-  Kmat <- matrix(NA, nrow = N, ncol = N_star)
-
-  mgrid <- meshgrid(ds, ds_star)
-
-  r_grid <- mgrid$Y
-  c_grid <- mgrid$X
-
-  for (r in 1:D) {
-    for (c in 1:D) {
-
-      r_indices <- which(ds == r)
-      c_indices <- which(ds_star == c)
-
-      xs <- xs[r_indices]
-      xs_prime <- xs_star[c_indices]
-
-      K_rc <- K_ij(xs, xs_prime, r, c, ws, Sigmas, mus, thetas, phis)
-
-      mask <- r_grid == r & c_grid == c
-
-      Kmat[mask] <- K_rc
-    }
-  }
-
-  return(Kmat)
-}
-
-# Simulate a draw from an MOGP
-simulate_mogp <- function(D, Q = 1, ns = 100, noise_sigma = 0.25, masked_pct = 0.2,
-                          zero_phi = FALSE,
-                          seed) {
+# Simulate a single draw from an MOSK GP (Q = 1)
+simulate_Q1_moskgp <- function(D,
+                               ns = 100,
+                               noise_sigma = 0.25,
+                               masked_pct = 0.2,
+                               zero_phi = FALSE,
+                               seed) {
 
   xs <- rep( seq(from = 0, to = 1, length.out = ns), times = D)
   ds <- rep(1:D, each = ns)
@@ -199,8 +180,8 @@ simulate_mogp <- function(D, Q = 1, ns = 100, noise_sigma = 0.25, masked_pct = 0
   return(list(params_df, output_df))
 }
 
-# Generate a single variate
-postpred_draw <- function(
+# Generate a single variate from a MOSK GP conditioned on hyperparameter values
+postpred_Q1_draw <- function(
     x, y, y_se, d,
     D,
     ns, # no. observations by band
@@ -219,7 +200,7 @@ postpred_draw <- function(
   diag(K_xx) <- diag(K_xx) + y_se^2
 
   # N x N* covariance K* = K(X,X*)
-  K_star = K_mat_v1(x, x_star, d, d_star, D, w, Sigma, mu, theta, phi)
+  K_star = K_mat(x, x_star, d, d_star, D, w, Sigma, mu, theta, phi)
 
   # N* x N* covariance K** = K(X*,X*)
   K_starstar <- Kxx_mat(x_star, D, ns_star, w, Sigma, mu, theta, phi)
@@ -244,25 +225,20 @@ postpred_draw <- function(
   return(result_df)
 }
 
-postpred_draws <- function(n_draws = 1,
-                           x,
-                           y,
-                           y_se,
-                           d,
-                           D,
-                           ns, # no. observations by band
-                           x_star,
-                           d_star,
-                           ns_star,
-                           w, Sigma, mu, theta, phi,
-                           seed = NULL,
-                           epsilon = 1e-9) {
+# Generate a n_draw variates conditioned on hyperparameter values
+postpred_Q1_draws <- function(n_draws = 1,
+                              x, y, y_se, d, D,
+                              ns, # no. observations by band
+                              x_star, d_star, ns_star,
+                              w, Sigma, mu, theta, phi,
+                              seed = NULL,
+                              epsilon = 1e-9) {
 
   l <- vector("list", n_draws)
 
   for (i in 1:n_draws) {
 
-    one_draw_df <- postpred_draw(
+    one_draw_df <- postpred_Q1_draw(
       x = x, y = y, y_se = y_se,
       d = d, D = D, ns = ns, x_star = x_star,
       d_star = d_star, ns_star = ns_star,
@@ -275,21 +251,11 @@ postpred_draws <- function(n_draws = 1,
   return( bind_rows(l, .id = ".draw"))
 }
 
-postpred_valid_draws <- function(
-    x,
-    y,
-    y_se,
-    d,
-    D,
-    ns,
-    x_star,
-    d_star,
-    ns_star,
-    ws,
-    Sigmas,
-    mus,
-    thetas,
-    phis,
+# Check which posterior predictive draws generate a proper covariance matrix.
+check_valid_postpred_draws <- function(
+    x, y, y_se, d, D, ns,
+    x_star, d_star, ns_star,
+    ws, Sigmas, mus, thetas, phis,
     seed = NULL,
     epsilon = 1e-9) {
 

@@ -1,5 +1,5 @@
 ---
-title: "Fit MOSM GP to toy example"
+title: "Fit MOSM GP to 2-band synthetic example"
 format: 
   html:
     embed-resources: true
@@ -7,7 +7,7 @@ format:
 
 This notebook contains the workflow for:
 
-- loading groundtruth multiband (MOGP) time-series, 
+- loading groundtruth 2-band (MOGP) time-series, 
 - fitting a MOGP model, 
 - checking which posterior draws produce valid covariance matrices, and 
 - visualing the posteriors of the valid draws.
@@ -33,7 +33,7 @@ source(here("mogp-utils.R"))
 
 filename_stub <- "D2-Q1-seed44791-n100-mcar0.2-sigma0.1"
 
-EXECUTE_SAMPLING <- TRUE
+EXECUTE_SAMPLING <- FALSE
 SAMPLING_SEED <- ifelse(EXECUTE_SAMPLING,
                round(runif(n = 1, 0, 999)),
                644)
@@ -149,6 +149,10 @@ output_draws |>
 output_draws |> mcmc_trace()
 ```
 
+```{r}
+output$draws(variables = c("theta", "phi")) |> 
+  mcmc_pairs()
+```
 
 ## Posterior Predictive Check
 
@@ -182,7 +186,7 @@ mean_phis <- posterior_means[9:10]
 
 n_draws <- 20
 
-mean_draws <- postpred_draws(
+mean_draws <- postpred_Q1_draws(
   n_draws = n_draws,
   x = input_df$t, 
   y = input_df$y, 
@@ -205,7 +209,7 @@ ggplot() +
             aes(x = x_star, y = f_star, 
                 colour = d_star,
                 group = interaction(d_star,.draw)), alpha = 0.4) +
-  geom_point(data = input_df, aes(x = t, y = y), size = 1) 
+  geom_point(data = input_df, aes(x = t, y = y, colour = factor(d)), size = 1) 
 ```
 
 
@@ -219,7 +223,7 @@ this_mu <- output_draws_mat[r, 5:6]
 this_theta <- output_draws_mat[r, 7:8]
 this_phi <- output_draws_mat[r, 9:10]
 
-pp_draws <- postpred_draws(
+pp_draws <- postpred_Q1_draws(
   n_draws = 10,
   x = input_df$t, 
   y = input_df$y, 
@@ -247,26 +251,32 @@ ggplot() +
 
 
 ```{r}
-tic()
-outputs <- postpred_valid_draws(
-  x = input_df$t, 
-  y = input_df$y, 
-  y_se = input_df$y_se, 
-  d = input_df$d, 
-  D = D, 
-  ns = ns, 
-  x_star = star_df$t_star, 
-  d_star = star_df$d_star, 
-  ns_star = ns_star, 
-  ws = output_draws_mat[,1:2],
-  Sigmas = output_draws_mat[,3:4],
-  mus = output_draws_mat[,5:6],
-  thetas = output_draws_mat[,7:8],
-  phis = output_draws_mat[,9:10],
-)
-toc()
-
-write_rds(outputs, here("RDS", glue("{filename_stub}_draws{SAMPLING_SEED}_valid.RDS")))
+if (EXECUTE_SAMPLING) {
+  
+  tic()
+  outputs <- postpred_valid_draws(
+    x = input_df$t, 
+    y = input_df$y, 
+    y_se = input_df$y_se, 
+    d = input_df$d, 
+    D = D, 
+    ns = ns, 
+    x_star = star_df$t_star, 
+    d_star = star_df$d_star, 
+    ns_star = ns_star, 
+    ws = output_draws_mat[,1:2],
+    Sigmas = output_draws_mat[,3:4],
+    mus = output_draws_mat[,5:6],
+    thetas = output_draws_mat[,7:8],
+    phis = output_draws_mat[,9:10],
+  )
+  toc()
+  
+  write_rds(outputs, here("RDS", glue("{filename_stub}_draws{SAMPLING_SEED}_valid.RDS")))
+} else {
+  
+  outputs <- read_rds(here("RDS", glue("{filename_stub}_draws{SAMPLING_SEED}_valid.RDS")))
+}
 
 ```
 
@@ -313,7 +323,6 @@ sapply(valid_draws_df[,1:11], estimate_mode)
 input_params
 diff(input_params$theta)
 ```
-
 
 ```{r}
 valid_draws_df |> 
@@ -385,3 +394,33 @@ valid_draws_df |>
   geom_histogram(bins = 30) 
 ```
 
+
+
+```{r}
+valid_draws_df |> 
+  ggplot() +
+  aes(x = `theta[1]`, y = `theta[2]`) +
+  geom_point()
+```
+
+```{r}
+valid_draws_df |> 
+  ggplot() +
+  aes(x = `phi[1]`, y = `phi[2]`) +
+  geom_point()
+```
+
+
+```{r}
+valid_draws_df |> 
+  ggplot() +
+  aes(x = `phi[1]`, y = `theta[1]`) +
+  geom_point()
+```
+
+```{r}
+valid_draws_df |> 
+  ggplot() +
+  aes(x = `phi[2]`, y = `theta[2]`) +
+  geom_point()
+```

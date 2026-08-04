@@ -39,7 +39,7 @@ while(i <= 20) {
   tryCatch(
     {
       SEED <- round(runif(1, min = 0, max = 99999))
-      output <- simulate_mogp(D, Q, num_points, noise_sigma, seed = SEED, masked_pct = pct_missing)
+      output <- simulate_Q1_moskgp(D, num_points, noise_sigma, seed = SEED, masked_pct = pct_missing)
       break
     },
     warning = function(cnd) {
@@ -85,6 +85,3 @@ write_tsv(
   here("data", param_output_filename)
 )
 ```
-
-
-
