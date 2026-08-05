@@ -39,7 +39,13 @@ while(i <= 20) {
   tryCatch(
     {
       SEED <- round(runif(1, min = 0, max = 99999))
-      output <- simulate_Q1_moskgp(D, num_points, noise_sigma, seed = SEED, masked_pct = pct_missing)
+      output <- simulate_Q1_moskgp(
+        D = D, 
+        ns = num_points, 
+        noise_sigma = noise_sigma, 
+        seed = SEED, 
+        masked_pct = pct_missing, 
+        zero_phi = TRUE)
       break
     },
     warning = function(cnd) {
