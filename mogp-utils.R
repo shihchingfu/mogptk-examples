@@ -148,12 +148,12 @@ simulate_Q1_moskgp <- function(D,
   ws <-     round( abs( rnorm(D, mean = 0, sd = 1.0) ), 2 )
   Sigmas <- round( abs( rnorm(D, mean = 0, sd = 1.0) ), 2 )
   mus <-    round( abs( rnorm(D, mean = 5, sd = 1.0) ), 2 )
-  thetas <- sort( round( rnorm(D, mean = 0, sd = 1.0), 2 ) )
+  thetas <- sort( round( rnorm(D, mean = 0, sd = 1.0), 2 ) ) # ordered
 
   if (zero_phi) {
     phis <- rep(0.0, D)
   } else {
-    phis <- round( rnorm(D, mean = 0, sd = 1.0), 2 )
+    phis <- sort(  round( rnorm(D, mean = 0, sd = 1.0), 2 )  ) # ordered
   }
 
   KK <- Kxx_mat(xs, D, rep(ns, D), ws, Sigmas, mus, thetas, phis)
