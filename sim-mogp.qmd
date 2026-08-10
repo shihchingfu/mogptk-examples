@@ -29,37 +29,45 @@ The purpose of this notebook is to generate draws from a multi-output spectral m
 ```{r}
 D <- 2
 Q <- 1
+
+num_series <- 1
 num_points <- 100
+num_retries <- 20
 
 pct_missing <- 0.2
 noise_sigma <- 0.1
 
-i <- 1
-while(i <= 20) {
-  tryCatch(
-    {
-      SEED <- round(runif(1, min = 0, max = 99999))
-      output <- simulate_Q1_moskgp(
-        D = D, 
-        ns = num_points, 
-        noise_sigma = noise_sigma, 
-        seed = SEED, 
-        masked_pct = pct_missing, 
-        zero_phi = TRUE)
-      break
-    },
-    warning = function(cnd) {
-      cat("Warning:", i, "Seed:", SEED, conditionMessage(cnd), "\n")
-    },
-    finally = {
-      i <- i + 1
-    }
-  )
+for (s in 1:num_series) {
+  
+  i <- 1
+  while (i <= num_retries) {
+    tryCatch(
+      {
+        SEED <- round(runif(1, min = 0, max = 99999))
+        output <- simulate_Q1_moskgp(
+          D = D, 
+          ns = num_points, 
+          noise_sigma = noise_sigma, 
+          seed = SEED, 
+          masked_pct = pct_missing, 
+          zero_phi = TRUE)
+        break
+      },
+      warning = function(cnd) {
+        cat("Warning:", i, "Seed:", SEED, conditionMessage(cnd), "\n")
+      },
+      finally = {
+        i <- i + 1
+      }
+    )
+  }
+  
+  cat("i =", i-1, "Seed =", SEED, "\n")
+  
+  output_params <- output[[1]]
+  output_df <- output[[2]]
 }
-cat("i =",i-1, "Seed =", SEED, "\n")
 
-output_params <- output[[1]]
-output_df <- output[[2]]
 
 output_params
 ```
@@ -90,4 +98,66 @@ write_tsv(
   output_params, 
   here("data", param_output_filename)
 )
+```
+
+
+
+
+```{r}
+
+generate_Q1_moskgp_series <- function(n = num_series,
+                                      D = 2,
+                                      Q = 1,
+                                      num_points = 100,
+                                      pct_missing = 0.2,
+                                      noise_sigma = 0.1) {
+
+i <- 1
+while (i <= 20) {
+  tryCatch(
+    {
+      SEED <- round(runif(1, min = 0, max = 99999))
+      output <- simulate_Q1_moskgp(
+        D = D, 
+        ns = num_points, 
+        noise_sigma = noise_sigma, 
+        seed = SEED, 
+        masked_pct = pct_missing, 
+        zero_phi = TRUE)
+      break
+    },
+    warning = function(cnd) {
+      cat("Warning:", i, "Seed:", SEED, conditionMessage(cnd), "\n")
+    },
+    finally = {
+      i <- i + 1
+    }
+  )
+}
+cat("i =", i-1, "Seed =", SEED, "\n")
+
+output_params <- output[[1]]
+output_df <- output[[2]]
+
+output_params
+
+
+output_filename_stub <- glue("D{D}-Q{Q}-seed{SEED}-n{num_points}-mcar{pct_missing}-sigma{noise_sigma}")
+
+df_output_filename <- glue("{output_filename_stub}-sim.csv")
+param_output_filename <- glue("{output_filename_stub}-param.tsv")
+
+write_csv(
+  output_df |>
+    filter(!masked) |> 
+    select(-masked), 
+  here("data", df_output_filename)
+)
+
+write_tsv(
+  output_params, 
+  here("data", param_output_filename)
+)
+}
+
 ```
