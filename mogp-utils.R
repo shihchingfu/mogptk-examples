@@ -1,4 +1,5 @@
 library(mvtnorm)
+library(tictoc)
 
 # Returns the cross-covariance between scalar location x in band i and
 # scalar location x_prime in band j, conditioned on hyperparameter values.
@@ -147,7 +148,7 @@ simulate_Q1_moskgp <- function(D,
   ws <-     round( abs( rnorm(D, mean = 0, sd = 1.0) ), 2 )
   Sigmas <- round( abs( rnorm(D, mean = 0, sd = 1.0) ), 2 )
   mus <-    round( abs( rnorm(D, mean = 5, sd = 1.0) ), 2 )
-  thetas <- round( rnorm(D, mean = 0, sd = 1.0), 2 )
+  thetas <- sort( round( rnorm(D, mean = 0, sd = 1.0), 2 ) )
 
   if (zero_phi) {
     phis <- rep(0.0, D)
@@ -265,8 +266,13 @@ check_valid_postpred_draws <- function(
 
   warning_count <- 0
   error_count <- 0
+  valid_count <- 0
+
 
   for (r in 1:n_draws) {
+    if (r == 1) {
+      format(start_time <- Sys.time())
+    }
 
     this_w <- ws[r,]
     this_Sigma <- Sigmas[r,]
@@ -276,17 +282,15 @@ check_valid_postpred_draws <- function(
 
     return_string <- tryCatch(
       warning = function(cnd) {
-        #cat("Warning:", r, conditionMessage(cnd), "\n")
         pp_list[[r]] <- NA
         return("warning")
       },
       error = function(cnd) {
-        #cat("Error:", r, conditionMessage(cnd), "\n")
         pp_list[[r]] <- NA
         return("error")
       },
       {
-        new_draw <- postpred_draw(
+        new_draw <- postpred_Q1_draw(
           x = x,
           y = y,
           y_se = y_se,
@@ -313,17 +317,20 @@ check_valid_postpred_draws <- function(
       warning_count <- warning_count + 1
     } else if (return_string == "error") {
       error_count <- error_count + 1
-    } else if (return_string == "valid") {
-
+    } else {
+      valid_count <- valid_count + 1
     }
 
     if (r %% 100 == 0) {
+
       cat(
-        paste0(r,"/", n_draws,
-               ": Warnings = ", warning_count,
-               ", Errors = ", error_count,
-               ", Valid = ", r - warning_count - error_count,
-               "\n")
+        paste0(
+          r,"/", n_draws,
+          ":\tWarnings = ", warning_count,
+          ",\tErrors = ", error_count,
+          ",\tValid = ", valid_count,
+          "\t(", format( difftime(Sys.time(), start_time), digits = 3 ), ")",
+          "\n")
       )
     }
 
@@ -340,3 +347,101 @@ check_valid_postpred_draws <- function(
 
   return( list(pp_df, valid_pps) )
 }
+
+
+
+check_valid_postpred_draws_parallel <- function(
+    x, y, y_se, d, D, ns,
+    x_star, d_star, ns_star,
+    ws, Sigmas, mus, thetas, phis,
+    seed = NULL,
+    epsilon = 1e-9) {
+
+  n_draws <- NROW(ws)
+  pp_list <- vector("list", n_draws)
+  valid_pps <- rep(FALSE, n_draws)
+
+  warning_count <- 0
+  error_count <- 0
+  valid_count <- 0
+
+
+  for (r in 1:n_draws) {
+    if (r == 1) {
+      format(start_time <- Sys.time())
+    }
+
+    this_w <- ws[r,]
+    this_Sigma <- Sigmas[r,]
+    this_mu <- mus[r,]
+    this_theta <- thetas[r,]
+    this_phi <- phis[r,]
+
+    return_string <- tryCatch(
+      warning = function(cnd) {
+        pp_list[[r]] <- NA
+        return("warning")
+      },
+      error = function(cnd) {
+        pp_list[[r]] <- NA
+        return("error")
+      },
+      {
+        new_draw <- postpred_Q1_draw(
+          x = x,
+          y = y,
+          y_se = y_se,
+          d = d,
+          D = D,
+          ns = ns,
+          x_star = x_star,
+          d_star = d_star,
+          ns_star = ns_star,
+          this_w,
+          this_Sigma,
+          this_mu,
+          this_theta,
+          this_phi
+        ) |>
+          mutate(.draw = r)
+
+        pp_list[[r]] <- new_draw
+        valid_pps[r] <- TRUE
+      }
+    )
+
+    if (return_string == "warning") {
+      warning_count <- warning_count + 1
+    } else if (return_string == "error") {
+      error_count <- error_count + 1
+    } else {
+      valid_count <- valid_count + 1
+    }
+
+    if (r %% 100 == 0) {
+
+      cat(
+        paste0(
+          r,"/", n_draws,
+          ":\tWarnings = ", warning_count,
+          ",\tErrors = ", error_count,
+          ",\tValid = ", valid_count,
+          "\t(", format( difftime(Sys.time(), start_time), digits = 3 ), ")",
+          "\n")
+      )
+    }
+
+  }
+
+  pp_df <- bind_rows(pp_list, .id = ".draw")
+
+  cat(
+    paste0(
+      "Total draws: ", n_draws,
+      "\nTotal warnings: ", warning_count,
+      "\nTotal errors: ", error_count, "\n")
+  )
+
+  return( list(pp_df, valid_pps) )
+}
+
