@@ -31,7 +31,7 @@ color_scheme_set("viridis") # bayesplot
 
 source(here("mogp-utils.R"))
 
-filename_stub <- "D2-Q1-seed28027-n100-mcar0.2-sigma0.1"
+filename_stub <- "D2-Q1-seed2727-n100-mcar0.2-sigma0.1"
 
 EXECUTE_SAMPLING <- TRUE
 SAMPLING_SEED <- ifelse(EXECUTE_SAMPLING,
@@ -177,6 +177,10 @@ posterior_means <- as.data.frame(output_draws) |>
 posterior_means
 ```
 
+```{r}
+input_params
+```
+
 ```{r eval=FALSE}
 mean_ws <- posterior_means[1:2]
 mean_Sigmas <- posterior_means[3:4]
@@ -184,7 +188,7 @@ mean_mus <- posterior_means[5:6]
 mean_thetas <- posterior_means[7:8]
 mean_phis <- c(0.0, 0.0) #posterior_means[9:10]
 
-n_draws <- 20
+n_draws <- 10
 
 mean_draws <- postpred_Q1_draws(
   n_draws = n_draws,
@@ -215,7 +219,7 @@ ggplot() +
 
 ```{r}
 # Draw posterior predictive samples using a particular posterior draw
-r <- 601
+r <- 1200
 output_draws_mat <- output_draws |> as.matrix()
 this_w <- output_draws_mat[r, 1:2]
 this_Sigma <- output_draws_mat[r, 3:4]
@@ -254,7 +258,7 @@ ggplot() +
 if (EXECUTE_SAMPLING) {
   
   tic()
-  outputs <- postpred_valid_draws(
+  outputs <- check_valid_postpred_draws(
     x = input_df$t, 
     y = input_df$y, 
     y_se = input_df$y_se, 
@@ -268,7 +272,7 @@ if (EXECUTE_SAMPLING) {
     Sigmas = output_draws_mat[,3:4],
     mus = output_draws_mat[,5:6],
     thetas = output_draws_mat[,7:8],
-    phis = matrix(0, nrow = NROW(output_draws_mat), ncol = D) #output_draws_mat[,9:10],
+    phis = matrix(0, nrow = NROW(output_draws_mat), ncol = D)
   )
   toc()
   
@@ -401,7 +405,7 @@ valid_draws_df |>
   ggplot() +
   aes(x = deltaTheta) +
   geom_density() +
-  geom_vline(xintercept = diff(input_params$theta), colour = "red")
+  geom_vline(xintercept = abs(diff(input_params$theta)), colour = "red")
 ```
 
 
