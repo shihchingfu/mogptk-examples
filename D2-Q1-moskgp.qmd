@@ -332,12 +332,6 @@ diff(input_params$theta)
 ```
 
 ```{r}
--0.5722369-0.6251850
-```
-
-
-
-```{r}
 valid_draws_df |> 
   select(.draw, starts_with("w")) |> 
   pivot_longer(2:3) |> 
@@ -405,7 +399,7 @@ valid_draws_df |>
   ggplot() +
   aes(x = deltaTheta) +
   geom_density() +
-  geom_vline(xintercept = abs(diff(input_params$theta)), colour = "red")
+  geom_vline(xintercept = with(input_params, theta[1] - theta[2]), colour = "red")
 ```
 
 

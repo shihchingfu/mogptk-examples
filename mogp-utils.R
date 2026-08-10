@@ -322,14 +322,14 @@ check_valid_postpred_draws <- function(
     }
 
     if (r %% 100 == 0) {
-
       cat(
         paste0(
           r,"/", n_draws,
           ":\tWarnings = ", warning_count,
           ",\tErrors = ", error_count,
           ",\tValid = ", valid_count,
-          "\t(", format( difftime(Sys.time(), start_time), digits = 3 ), ")",
+          " (",format(valid_count/r*100, digits = 3), "%)",
+          "\t[", format( difftime(Sys.time(), start_time), digits = 3 ), "]",
           "\n")
       )
     }
@@ -349,7 +349,7 @@ check_valid_postpred_draws <- function(
 }
 
 
-
+# Check validity of posterior predictive draws for generating spectral kernels
 check_valid_postpred_draws_parallel <- function(
     x, y, y_se, d, D, ns,
     x_star, d_star, ns_star,
