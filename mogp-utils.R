@@ -165,7 +165,7 @@ simulate_Q1_moskgp <- function(D,
     y = rep(NA, N),
     y_se = rep(noise_sigma, N),
     d = factor(ds),
-    masked = runif(N) < masked_pct
+    masked = create_block_missing_mask(N, masked_pct, seed)
   ) |>
     mutate(y = f + rnorm(length(xs), mean = 0, sd = noise_sigma))
 
@@ -268,7 +268,6 @@ check_valid_postpred_draws <- function(
   error_count <- 0
   valid_count <- 0
 
-
   for (r in 1:n_draws) {
     if (r == 1) {
       format(start_time <- Sys.time())
@@ -348,100 +347,28 @@ check_valid_postpred_draws <- function(
   return( list(pp_df, valid_pps) )
 }
 
+# Returns a logical mask for dropping values in contiguous blocks
+create_block_missing_mask <- function(n, pct_missing = 0.5, seed = NULL) {
+  set.seed(seed)
 
-# Check validity of posterior predictive draws for generating spectral kernels
-check_valid_postpred_draws_parallel <- function(
-    x, y, y_se, d, D, ns,
-    x_star, d_star, ns_star,
-    ws, Sigmas, mus, thetas, phis,
-    seed = NULL,
-    epsilon = 1e-9) {
+  n_missing <- floor(pct_missing * n)
+  idx <- 1:n
 
-  n_draws <- NROW(ws)
-  pp_list <- vector("list", n_draws)
-  valid_pps <- rep(FALSE, n_draws)
+  for (i in 1:(pct_missing*n)) {
 
-  warning_count <- 0
-  error_count <- 0
-  valid_count <- 0
+    lo_cutpoint <- runif(1, min = 1, max = n_missing)
+    up_cutpoint <- mean(c(lo_cutpoint, n))
+    offset <- ceiling(up_cutpoint - lo_cutpoint)
 
+    inc_idx <- which(idx >= lo_cutpoint & idx < up_cutpoint)
+    dec_idx <- which(idx >= up_cutpoint)
 
-  for (r in 1:n_draws) {
-    if (r == 1) {
-      format(start_time <- Sys.time())
-    }
-
-    this_w <- ws[r,]
-    this_Sigma <- Sigmas[r,]
-    this_mu <- mus[r,]
-    this_theta <- thetas[r,]
-    this_phi <- phis[r,]
-
-    return_string <- tryCatch(
-      warning = function(cnd) {
-        pp_list[[r]] <- NA
-        return("warning")
-      },
-      error = function(cnd) {
-        pp_list[[r]] <- NA
-        return("error")
-      },
-      {
-        new_draw <- postpred_Q1_draw(
-          x = x,
-          y = y,
-          y_se = y_se,
-          d = d,
-          D = D,
-          ns = ns,
-          x_star = x_star,
-          d_star = d_star,
-          ns_star = ns_star,
-          this_w,
-          this_Sigma,
-          this_mu,
-          this_theta,
-          this_phi
-        ) |>
-          mutate(.draw = r)
-
-        pp_list[[r]] <- new_draw
-        valid_pps[r] <- TRUE
-      }
-    )
-
-    if (return_string == "warning") {
-      warning_count <- warning_count + 1
-    } else if (return_string == "error") {
-      error_count <- error_count + 1
-    } else {
-      valid_count <- valid_count + 1
-    }
-
-    if (r %% 100 == 0) {
-
-      cat(
-        paste0(
-          r,"/", n_draws,
-          ":\tWarnings = ", warning_count,
-          ",\tErrors = ", error_count,
-          ",\tValid = ", valid_count,
-          "\t(", format( difftime(Sys.time(), start_time), digits = 3 ), ")",
-          "\n")
-      )
-    }
-
+    idx[inc_idx] <- idx[inc_idx] + offset
+    idx[dec_idx] <- idx[dec_idx] - offset
   }
 
-  pp_df <- bind_rows(pp_list, .id = ".draw")
+  missing_mask <- rep(c(TRUE, FALSE), times = c(n_missing, n - n_missing))
+  missing_mask <- missing_mask[idx]
 
-  cat(
-    paste0(
-      "Total draws: ", n_draws,
-      "\nTotal warnings: ", warning_count,
-      "\nTotal errors: ", error_count, "\n")
-  )
-
-  return( list(pp_df, valid_pps) )
+  return(missing_mask)
 }
-
