@@ -63,7 +63,8 @@ K_ij <- function(xs, xs_prime, i, j,
 }
 
 # Returns a square cross-covariance matrix of elements of the vector of
-# locations x with itself in the same band.
+# locations x with itself in the same band. n is the number of observations
+# within each band.
 Kxx_mat <- function(x, D, n,
                     ws, Sigmas, mus, thetas, phis) {
 
@@ -252,6 +253,78 @@ postpred_Q1_draws <- function(n_draws = 1,
   return( bind_rows(l, .id = ".draw"))
 }
 
+batch_check_K_validity <- function(x, D, n, ws, Sigmas, mus, thetas, phis) {
+
+  n_draws <- NROW(ws)
+  valid_K <- rep("", n_draws)
+
+  warning_count <- 0
+  error_count <- 0
+  valid_count <- 0
+
+  for (r in 1:n_draws) {
+    if (r == 1) {
+      format(start_time <- Sys.time())
+    }
+
+    this_w <- ws[r,]
+    this_Sigma <- Sigmas[r,]
+    this_mu <- mus[r,]
+    this_theta <- thetas[r,]
+    this_phi <- phis[r,]
+
+    return_string <- tryCatch(
+      warning = function(cnd) {
+        valid_K[r] <- conditionMessage(cnd)
+        return("warning")
+      },
+      error = function(cnd) {
+        valid_K[r] <- conditionMessage(cnd)
+        return("error")
+      },
+      {
+        Kxx <- Kxx_mat(x, D, n,
+                       this_w, this_Sigma, this_mu, this_theta, this_phi)
+        rmvnorm(n = 1, mean = rep(0, length(x)), sigma = Kxx)
+        valid_K[r] <- "Valid"
+      }
+    )
+
+    if (return_string == "warning") {
+      warning_count <- warning_count + 1
+    } else if (return_string == "error") {
+      error_count <- error_count + 1
+    } else {
+      valid_count <- valid_count + 1
+    }
+
+    if ( (r %% round(n_draws/100)) == 0 ) {
+      cat(
+        paste0(
+          r,"/", n_draws,
+          ":\tWarnings = ", warning_count,
+          ",\tErrors = ", error_count,
+          ",\tValid = ", valid_count,
+          " (",format(valid_count/r*100, digits = 3), "%)",
+          "\t[", format( difftime(Sys.time(), start_time), digits = 3 ), "]",
+          "\n")
+      )
+    }
+
+  }
+
+  cat(
+    paste0(
+      "Total draws: ", n_draws,
+      "\nTotal warnings: ", warning_count,
+      "\nTotal errors: ", error_count, "\n")
+  )
+
+  return( valid_K )
+}
+
+
+
 # Check which posterior predictive draws generate a proper covariance matrix.
 check_valid_postpred_draws <- function(
     x, y, y_se, d, D, ns,
@@ -262,7 +335,7 @@ check_valid_postpred_draws <- function(
 
   n_draws <- NROW(ws)
   pp_list <- vector("list", n_draws)
-  valid_pps <- rep(FALSE, n_draws)
+  valid_pps <- rep(NA, n_draws)
 
   warning_count <- 0
   error_count <- 0
@@ -282,10 +355,12 @@ check_valid_postpred_draws <- function(
     return_string <- tryCatch(
       warning = function(cnd) {
         pp_list[[r]] <- NA
+        valid_pps[r] <- "Warning"
         return("warning")
       },
       error = function(cnd) {
         pp_list[[r]] <- NA
+        valid_pps[r] <- "Error"
         return("error")
       },
       {
@@ -308,7 +383,7 @@ check_valid_postpred_draws <- function(
           mutate(.draw = r)
 
         pp_list[[r]] <- new_draw
-        valid_pps[r] <- TRUE
+        valid_pps[r] <- "Valid"
       }
     )
 
