@@ -30,7 +30,7 @@ The purpose of this notebook is to generate draws from a multi-output spectral m
 D <- 2
 Q <- 1
 
-num_points <- 100
+n_points_per_band <- 100
 max_attempts <- 10
 
 pct_missing <- 0.3
@@ -41,21 +41,21 @@ errored <- TRUE
 output <- NULL
 
 while (i <= max_attempts && errored) {
-  SEED <- round(runif(1, min = 0, max = 99999))
+  seed <- round(runif(1, min = 0, max = 99999))
   errored <- tryCatch(
     {
       output <- simulate_Q1_moskgp(
         D = D, 
-        ns = num_points, 
+        n_per_band = n_points_per_band, 
         noise_sigma = noise_sigma, 
-        seed = SEED, 
+        seed = seed, 
         masked_pct = pct_missing, 
         zero_phi = TRUE)
-      cat( paste0("Completed: i = ", i, ", Seed = ", SEED, "\n") )
+      cat( paste0("Completed: i = ", i, ", Seed = ", seed, "\n") )
       FALSE
     },
     warning = function(cnd) {
-      cat( paste0("Warning: i = ", i, ", Seed = ", SEED, " \"", conditionMessage(cnd), "\"\n") )
+      cat( paste0("Warning: i = ", i, ", Seed = ", seed, " \"", conditionMessage(cnd), "\"\n") )
       TRUE
     },
     finally = {
@@ -76,6 +76,10 @@ output_params
 ```
 
 ```{r}
+str(output_df)
+```
+
+```{r}
 output_df |> 
   ggplot() +
   aes(x = t, y = y, alpha = ifelse(masked, 0.2, 1), colour = d) +
@@ -86,7 +90,7 @@ output_df |>
 ```
 
 ```{r}
-output_filename_stub <- glue("D{D}-Q{Q}-seed{SEED}-n{num_points}-mnar{pct_missing}-sigma{noise_sigma}")
+output_filename_stub <- glue("D{D}-Q{Q}-seed{seed}-n{n_points_per_band*D}-mnar{pct_missing}-sigma{noise_sigma}")
 
 df_output_filename <- glue("{output_filename_stub}-sim.csv")
 param_output_filename <- glue("{output_filename_stub}-param.tsv")

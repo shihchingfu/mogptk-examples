@@ -1,5 +1,6 @@
 library(mvtnorm)
 library(tictoc)
+library(stringr)
 
 # Returns the cross-covariance between scalar location x in band i and
 # scalar location x_prime in band j, conditioned on hyperparameter values.
@@ -34,7 +35,8 @@ k_ii <- function(x, x_prime,
 # Returns a [n x n_prime] matrix containing the covariance between the elements
 # of the vector of locations x in band i with the elements of the vector of
 # locations x_prime in band j.
-K_ij <- function(xs, xs_prime, i, j,
+K_ij <- function(xs, xs_prime,
+                 i, j,
                  ws, Sigmas, mus, thetas, phis) {
 
   n <- length(xs)
@@ -63,32 +65,33 @@ K_ij <- function(xs, xs_prime, i, j,
 }
 
 # Returns a square cross-covariance matrix of elements of the vector of
-# locations x with itself in the same band. n is the number of observations
+# locations x with itself in the same band. 'ns' is the number of observations
 # within each band.
-Kxx_mat <- function(x, D, n,
+Kxx_mat <- function(xs, ns, D,
                     ws, Sigmas, mus, thetas, phis) {
 
-  end_idx <- cumsum(n)
-  start_idx <- 1 + end_idx - n
+  end_idx <- cumsum(ns)
+  start_idx <- 1 + end_idx - ns
 
-  N <- length(x)
+  N <- length(xs)
 
   Kxxmat <- matrix(NA, nrow = N, ncol = N)
 
   for (r in 1:D) {
     for (c in 1:D) {
 
-      nrows <- n[r]
-      rcols <- n[c]
+      nrows <- ns[r]
+      rcols <- ns[c]
 
       start_row <- start_idx[r];
       end_row <- end_idx[r];
       start_col <- start_idx[c];
       end_col <- end_idx[c];
 
-      K_ij_mat <- K_ij(x[start_row:end_row],
-                       x[start_col:end_col],
-                       r, c, ws, Sigmas, mus, thetas, phis)
+      K_ij_mat <- K_ij(xs[start_row:end_row],
+                       xs[start_col:end_col],
+                       r, c,
+                       ws, Sigmas, mus, thetas, phis)
 
       Kxxmat[start_row:end_row, start_col:end_col] <- K_ij_mat
     }
@@ -134,14 +137,15 @@ K_mat <- function(xs, xs_star, ds, ds_star, D,
 
 # Simulate a single draw from an MOSK GP (Q = 1)
 simulate_Q1_moskgp <- function(D,
-                               ns = 100,
+                               n_per_band = 100,
                                noise_sigma = 0.25,
                                masked_pct = 0.2,
                                zero_phi = FALSE,
                                seed) {
 
-  xs <- rep( seq(from = 0, to = 1, length.out = ns), times = D)
-  ds <- rep(1:D, each = ns)
+  xs <- rep( seq(from = 0, to = 1, length.out = n_per_band), times = D)
+  ds <- rep(1:D, each = n_per_band)
+  ns <- rep(n_per_band, D)
   N <- length(xs)
 
   set.seed(seed)
@@ -157,7 +161,7 @@ simulate_Q1_moskgp <- function(D,
     phis <- sort(  round( rnorm(D, mean = 0, sd = 1.0), 2 )  ) # ordered
   }
 
-  KK <- Kxx_mat(xs, D, rep(ns, D), ws, Sigmas, mus, thetas, phis)
+  KK <- Kxx_mat(xs, ns, D, ws, Sigmas, mus, thetas, phis)
 
   set.seed(seed)
   output_df <- data.frame(
@@ -182,30 +186,54 @@ simulate_Q1_moskgp <- function(D,
   return(list(params_df, output_df))
 }
 
+# Returns a logical mask for dropping values in contiguous blocks
+create_block_missing_mask <- function(n, prop_missing = 0.5, seed = NULL) {
+  set.seed(seed)
+
+  n_missing <- floor(prop_missing * n)
+  idx <- 1:n
+
+  for (i in 1:(prop_missing*n)) {
+
+    lo_cutpoint <- runif(1, min = 1, max = n_missing)
+    up_cutpoint <- mean(c(lo_cutpoint, n))
+    offset <- ceiling(up_cutpoint - lo_cutpoint)
+
+    inc_idx <- which(idx >= lo_cutpoint & idx < up_cutpoint)
+    dec_idx <- which(idx >= up_cutpoint)
+
+    idx[inc_idx] <- idx[inc_idx] + offset
+    idx[dec_idx] <- idx[dec_idx] - offset
+  }
+
+  missing_mask <- rep(c(TRUE, FALSE), times = c(n_missing, n - n_missing))
+  missing_mask <- missing_mask[idx]
+
+  return(missing_mask)
+}
+
+
 # Generate a single variate from a MOSK GP conditioned on hyperparameter values
 postpred_Q1_draw <- function(
-    x, y, y_se, d,
+    xs, ys, ys_se, ds, ns, # no. observations by band
+    xs_star, ds_star, ns_star,
     D,
-    ns, # no. observations by band
-    x_star,
-    d_star,
-    ns_star,
     w, Sigma, mu, theta, phi,
     seed = NULL,
     epsilon = 1e-9) {
 
-  N <- length(x);
-  N_star <- length(x_star);
+  N <- length(xs);
+  N_star <- length(xs_star);
 
   # N x N covariance KS = K(X,X) + Sigma_noise
-  K_xx <- Kxx_mat(x, D, ns, w, Sigma, mu, theta, phi)
-  diag(K_xx) <- diag(K_xx) + y_se^2
+  K_xx <- Kxx_mat(xs, ns, D, w, Sigma, mu, theta, phi)
+  diag(K_xx) <- diag(K_xx) + ys_se^2
 
   # N x N* covariance K* = K(X,X*)
-  K_star = K_mat(x, x_star, d, d_star, D, w, Sigma, mu, theta, phi)
+  K_star = K_mat(xs, xs_star, ds, ds_star, D, w, Sigma, mu, theta, phi)
 
   # N* x N* covariance K** = K(X*,X*)
-  K_starstar <- Kxx_mat(x_star, D, ns_star, w, Sigma, mu, theta, phi)
+  K_starstar <- Kxx_mat(xs_star, ns_star, D, w, Sigma, mu, theta, phi)
 
   fstar_mu <- t(K_star) %*% solve(K_xx) %*% y
   fstar_Sigma <- K_starstar - t(K_star) %*% solve(K_xx) %*% K_star
@@ -219,7 +247,7 @@ postpred_Q1_draw <- function(
     sigma = fstar_Sigma)
 
   result_df <- data.frame(
-    d_star = factor(d_star),
+    d_star = factor(ds_star),
     x_star,
     f_star = t(f_star)
   )
@@ -228,24 +256,25 @@ postpred_Q1_draw <- function(
 }
 
 # Generate a n_draw variates conditioned on hyperparameter values
-postpred_Q1_draws <- function(n_draws = 1,
-                              x, y, y_se, d, D,
-                              ns, # no. observations by band
-                              x_star, d_star, ns_star,
-                              w, Sigma, mu, theta, phi,
-                              seed = NULL,
-                              epsilon = 1e-9) {
+postpred_Q1_draws <- function(
+    n_draws = 1,
+    xs, ys, ys_se, ds, ns, # no. observations by band
+    xs_star, ds_star, ns_star,
+    D,
+    w, Sigma, mu, theta, phi,
+    seed = NULL,
+    epsilon = 1e-9) {
 
   l <- vector("list", n_draws)
 
   for (i in 1:n_draws) {
-
     one_draw_df <- postpred_Q1_draw(
-      x = x, y = y, y_se = y_se,
-      d = d, D = D, ns = ns, x_star = x_star,
-      d_star = d_star, ns_star = ns_star,
-      w = w, Sigma = Sigma, mu = mu, theta = theta,
-      phi = phi, seed = seed, epsilon = epsilon)
+      xs, ys, ys_se, ds, ns,
+      xs_star, ds_star, ns_star,
+      D,
+      w, Sigma, mu, theta, phi,
+      seed,
+      epsilon)
 
     l[[i]] <- one_draw_df
   }
@@ -253,7 +282,13 @@ postpred_Q1_draws <- function(n_draws = 1,
   return( bind_rows(l, .id = ".draw"))
 }
 
-batch_check_K_validity <- function(x, D, n, ws, Sigmas, mus, thetas, phis) {
+# Check the validity of the covariance matrix built from hyperparameter combinations taken from the posterior.
+batch_check_K_validity <- function(
+    xs, xs_star,
+    ds, ds_star,
+    ns, ns_star,
+    D,
+    ws, Sigmas, mus, thetas, phis) {
 
   n_draws <- NROW(ws)
   valid_K <- rep("", n_draws)
@@ -275,30 +310,40 @@ batch_check_K_validity <- function(x, D, n, ws, Sigmas, mus, thetas, phis) {
 
     return_string <- tryCatch(
       warning = function(cnd) {
-        valid_K[r] <- conditionMessage(cnd)
-        return("warning")
+        return( paste0("Warning: ", conditionMessage(cnd)) )
       },
       error = function(cnd) {
-        valid_K[r] <- conditionMessage(cnd)
-        return("error")
+        return( paste0("Error: ", conditionMessage(cnd)) )
       },
       {
-        Kxx <- Kxx_mat(x, D, n,
+        Kxx <- Kxx_mat(xs, ns, D,
                        this_w, this_Sigma, this_mu, this_theta, this_phi)
-        rmvnorm(n = 1, mean = rep(0, length(x)), sigma = Kxx)
+        chol(Kxx)
+
+        K_star = K_mat(xs, xs_star, ds, ds_star, D,
+                       this_w, this_Sigma, this_mu, this_theta, this_phi)
+        chol(K_star)
+
+        K_starstar <- Kxx_mat(xs_star, ns_star, D,
+                              this_w, this_Sigma, this_mu, this_theta, this_phi)
+        chol(K_starstar)
+
+        #rmvnorm(n = 1, mean = rep(0, length(x)), sigma = Kxx)
         valid_K[r] <- "Valid"
       }
     )
 
-    if (return_string == "warning") {
+    if (str_starts(return_string, "Warn")) {
       warning_count <- warning_count + 1
-    } else if (return_string == "error") {
+      valid_K[r] <- return_string
+    } else if (str_starts(return_string, "Err")) {
       error_count <- error_count + 1
-    } else {
+      valid_K[r] <- return_string
+    } else if (return_string == "Valid") {
       valid_count <- valid_count + 1
     }
 
-    if ( (r %% round(n_draws/100)) == 0 ) {
+    if ( (r %% round(n_draws/20)) == 0 | r == 1 ) {
       cat(
         paste0(
           r,"/", n_draws,
@@ -317,18 +362,71 @@ batch_check_K_validity <- function(x, D, n, ws, Sigmas, mus, thetas, phis) {
     paste0(
       "Total draws: ", n_draws,
       "\nTotal warnings: ", warning_count,
-      "\nTotal errors: ", error_count, "\n")
+      "\nTotal errors: ", error_count,
+      "\nTotal valid: ", valid_count, "\n")
   )
 
   return( valid_K )
 }
 
+# Generate draws from validated combinations of hyperparameters
+postpred_from_valid_draws <- function(
+    xs, ys, ys_se, ds, ns,
+    xs_star, ds_star, ns_star,
+    D,
+    ws, Sigmas, mus, thetas, phis,
+    seed = NULL,
+    epsilon = 1e-9) {
+
+  n_draws <- NROW(ws)
+  pp_list <- vector("list", n_draws)
+
+  for (r in 1:n_draws) {
+    if (r == 1) {
+      start_time <- Sys.time()
+
+      cat(
+        paste0(
+          r,"/", n_draws,
+          "\t[", format(difftime(Sys.time(), start_time), digits = 3), "]\n")
+        )
+    }
+
+    this_w <- ws[r,]
+    this_Sigma <- Sigmas[r,]
+    this_mu <- mus[r,]
+    this_theta <- thetas[r,]
+    this_phi <- phis[r,]
+
+    new_draw <- postpred_Q1_draw(
+      xs, ys, ys_se, ds, ns,
+      xs_star, ds_star, ns_star,
+      D,
+      this_w, this_Sigma, this_mu, this_theta, this_phi) |>
+      mutate(.draw = r)
+
+    pp_list[[r]] <- new_draw
+  }
+
+  if (r %% 100 == 0) {
+    cat(
+      paste0(
+        r,"/", n_draws,
+        "\t[", format(difftime(Sys.time(), start_time), digits = 3), "]\n")
+    )
+  }
+
+  pp_df <- bind_rows(pp_list, .id = ".draw")
+
+  return(pp_df)
+}
 
 
 # Check which posterior predictive draws generate a proper covariance matrix.
-check_valid_postpred_draws <- function(
-    x, y, y_se, d, D, ns,
-    x_star, d_star, ns_star,
+check_postpred_draws_validity <- function(
+    xs, ys, ys_se, ds, ns,
+    xs_star, ds_star, ns_star,
+    D,
     ws, Sigmas, mus, thetas, phis,
     seed = NULL,
     epsilon = 1e-9) {
@@ -365,21 +463,10 @@ check_valid_postpred_draws <- function(
       },
       {
         new_draw <- postpred_Q1_draw(
-          x = x,
-          y = y,
-          y_se = y_se,
-          d = d,
-          D = D,
-          ns = ns,
-          x_star = x_star,
-          d_star = d_star,
-          ns_star = ns_star,
-          this_w,
-          this_Sigma,
-          this_mu,
-          this_theta,
-          this_phi
-        ) |>
+          xs, ys, ys_se, ds, ns,
+          xs_star, ds_star, ns_star,
+          D,
+          this_w, this_Sigma, this_mu, this_theta, this_phi) |>
           mutate(.draw = r)
 
         pp_list[[r]] <- new_draw
@@ -402,7 +489,7 @@ check_valid_postpred_draws <- function(
           ":\tWarnings = ", warning_count,
           ",\tErrors = ", error_count,
           ",\tValid = ", valid_count,
-          " (",format(valid_count/r*100, digits = 3), "%)",
+          " (", format(valid_count/r*100, digits = 3), "%)",
           "\t[", format( difftime(Sys.time(), start_time), digits = 3 ), "]",
           "\n")
       )
@@ -415,6 +502,7 @@ check_valid_postpred_draws <- function(
   cat(
     paste0(
       "Total draws: ", n_draws,
+      "\nTotal valid", valid_count,
       "\nTotal warnings: ", warning_count,
       "\nTotal errors: ", error_count, "\n")
   )
@@ -422,28 +510,3 @@ check_valid_postpred_draws <- function(
   return( list(pp_df, valid_pps) )
 }
 
-# Returns a logical mask for dropping values in contiguous blocks
-create_block_missing_mask <- function(n, pct_missing = 0.5, seed = NULL) {
-  set.seed(seed)
-
-  n_missing <- floor(pct_missing * n)
-  idx <- 1:n
-
-  for (i in 1:(pct_missing*n)) {
-
-    lo_cutpoint <- runif(1, min = 1, max = n_missing)
-    up_cutpoint <- mean(c(lo_cutpoint, n))
-    offset <- ceiling(up_cutpoint - lo_cutpoint)
-
-    inc_idx <- which(idx >= lo_cutpoint & idx < up_cutpoint)
-    dec_idx <- which(idx >= up_cutpoint)
-
-    idx[inc_idx] <- idx[inc_idx] + offset
-    idx[dec_idx] <- idx[dec_idx] - offset
-  }
-
-  missing_mask <- rep(c(TRUE, FALSE), times = c(n_missing, n - n_missing))
-  missing_mask <- missing_mask[idx]
-
-  return(missing_mask)
-}

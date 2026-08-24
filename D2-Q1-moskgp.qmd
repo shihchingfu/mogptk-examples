@@ -31,12 +31,10 @@ color_scheme_set("viridis") # bayesplot
 
 source(here("mogp-utils.R"))
 
-filename_stub <- "D2-Q1-seed2727-n100-mcar0.2-sigma0.1"
+filename_stub <- "D2-Q1-seed25973-n200-mnar0.3-sigma0.1"
 
 EXECUTE_SAMPLING <- TRUE
-SAMPLING_SEED <- ifelse(EXECUTE_SAMPLING,
-               round(runif(n = 1, 0, 999)),
-               268)
+SAMPLING_SEED <- ifelse(EXECUTE_SAMPLING, round(runif(n = 1, 0, 999)), 363)
 ```
 
 ```{r}
@@ -104,17 +102,19 @@ if (EXECUTE_SAMPLING) {
     seed = SAMPLING_SEED,
     chains = 6,
     parallel_chains = 6,
-    iter_warmup = 500,
-    iter_sampling = 1000,
+    iter_warmup = 1000,
+    iter_sampling = 2000,
     refresh = 500,
     show_exceptions = FALSE,
     show_messages = TRUE
   )
   
-  output$save_object(here("RDS", glue("{filename_stub}_draws{SAMPLING_SEED}_mogp-zerophi.RDS")))
+  output$save_object(
+    here("RDS", glue("{filename_stub}_draws{SAMPLING_SEED}_mogp-zerophi.RDS")))
   
 } else {
-  output <- readRDS(here("RDS", glue("{filename_stub}_draws{SAMPLING_SEED}_mogp-zerophi.RDS")))
+  output <- readRDS(
+    here("RDS", glue("{filename_stub}_draws{SAMPLING_SEED}_mogp-zerophi.RDS")))
 }
 ```
 
@@ -141,6 +141,9 @@ valid_chains <- c(1:6)
 output_draws <- output$draws(variables = vars, format = "df") |> 
   subset_draws(chain = valid_chains)
 
+output_draws_mat <- as.matrix(output_draws)
+
+color_scheme_set("mix-red-blue")
 output_draws |> 
   summary(posterior::default_convergence_measures())
 ```
@@ -150,8 +153,7 @@ output_draws |> mcmc_trace()
 ```
 
 ```{r}
-output$draws(variables = c("theta")) |> 
-  mcmc_pairs()
+output$draws(variables = c("theta")) |> mcmc_pairs()
 ```
 
 ## Posterior Predictive Check
@@ -191,21 +193,11 @@ mean_phis <- c(0.0, 0.0) #posterior_means[9:10]
 n_draws <- 10
 
 mean_draws <- postpred_Q1_draws(
-  n_draws = n_draws,
-  x = input_df$t, 
-  y = input_df$y, 
-  y_se = input_df$y_se, 
-  d = input_df$d, 
+  n_draws = n_draws, 
+  xs = input_df$t, ys = input_df$y, ys_se = input_df$y_se, ds = input_df$d, ns = ns,  
+  xs_star = star_df$t_star, ds_star = star_df$d_star, ns_star = ns_star, 
   D = D, 
-  ns = ns, 
-  x_star = star_df$t_star, 
-  d_star = star_df$d_star, 
-  ns_star = ns_star, 
-  mean_ws,
-  mean_Sigmas,
-  mean_mus,
-  mean_thetas,
-  mean_phis
+  w = mean_ws, Sigma = mean_Sigmas, mu = mean_mus, theta = mean_thetas, phi = mean_phis
 )
 
 ggplot() +
@@ -216,11 +208,9 @@ ggplot() +
   geom_point(data = input_df, aes(x = t, y = y, colour = factor(d)), size = 1) 
 ```
 
-
-```{r}
+```{r eval=FALSE}
 # Draw posterior predictive samples using a particular posterior draw
-r <- 1200
-output_draws_mat <- output_draws |> as.matrix()
+r <- 10
 this_w <- output_draws_mat[r, 1:2]
 this_Sigma <- output_draws_mat[r, 3:4]
 this_mu <- output_draws_mat[r, 5:6]
@@ -229,20 +219,10 @@ this_phi <- c(0.0, 0.0) #output_draws_mat[r, 9:10]
 
 pp_draws <- postpred_Q1_draws(
   n_draws = 10,
-  x = input_df$t, 
-  y = input_df$y, 
-  y_se = input_df$y_se, 
-  d = input_df$d, 
+  xs = input_df$t, ys = input_df$y, ys_se = input_df$y_se, ds = input_df$d, ns = ns,  
+  xs_star = star_df$t_star, ds_star = star_df$d_star, ns_star = ns_star, 
   D = D, 
-  ns = ns, 
-  x_star = star_df$t_star, 
-  d_star = star_df$d_star, 
-  ns_star = ns_star, 
-  this_w,
-  this_Sigma,
-  this_mu,
-  this_theta,
-  this_phi
+  w = this_w, Sigma = this_Sigma, mu = this_mu, theta = this_theta, phi = this_phi
 )
 
 ggplot() +
@@ -258,21 +238,15 @@ ggplot() +
 if (EXECUTE_SAMPLING) {
   
   tic()
-  outputs <- check_valid_postpred_draws(
-    x = input_df$t, 
-    y = input_df$y, 
-    y_se = input_df$y_se, 
-    d = input_df$d, 
+  outputs <- check_postpred_draws_validity(
+    xs = input_df$t, ys = input_df$y, ys_se = input_df$y_se, ds = input_df$d, ns = ns, 
+    xs_star = star_df$t_star, ds_star = star_df$d_star, ns_star = ns_star, 
     D = D, 
-    ns = ns, 
-    x_star = star_df$t_star, 
-    d_star = star_df$d_star, 
-    ns_star = ns_star, 
     ws = output_draws_mat[,1:2],
     Sigmas = output_draws_mat[,3:4],
     mus = output_draws_mat[,5:6],
     thetas = output_draws_mat[,7:8],
-    phis = matrix(0, nrow = NROW(output_draws_mat), ncol = D)
+    phis = output_draws_mat[,9:10]
   )
   toc()
   
@@ -284,18 +258,52 @@ if (EXECUTE_SAMPLING) {
 
 ```
 
+### Test code for faster validity checking
+
+
 ```{r}
-str(outputs)
-
-valid_postpred_draws <- outputs[[1]]
-valid_postpred_idx <- which(outputs[[2]])
-
-str(valid_postpred_idx)
+tic()
+valid_draws_checks <- batch_check_K_validity(
+  xs = input_df$t, xs_star = star_df$t_star, 
+  ds = input_df$d, ds_star = star_df$d_star, 
+  ns = ns, ns_star = ns_star,
+  D = D,
+  ws = output_draws_mat[,1:2],
+  Sigmas = output_draws_mat[,3:4],
+  mus = output_draws_mat[,5:6],
+  thetas = output_draws_mat[,7:8],
+  phis = matrix(0, nrow = NROW(output_draws_mat), ncol = D) #output_draws_mat[,9:10]
+)
+toc()
 ```
 
 ```{r}
+valid_draws_idx <- which(valid_draws_checks == "Valid")
+valid_draws_df <- output_draws[valid_draws_idx,]
+valid_draws_mat <- as.matrix(valid_draws_df)
+```
+
+```{r}
+tic()
+valid_postpred_draws_df <- postpred_from_valid_draws(
+  xs = input_df$t, ys = input_df$y, ys_se = input_df$y_se, 
+  ds = input_df$d, ns = ns, 
+  xs_star = star_df$t_star, 
+  ds_star = star_df$d_star, ns_star = ns_star,
+  D = D,
+  ws = output_draws_mat[,1:2],
+  Sigmas = output_draws_mat[,3:4],
+  mus = output_draws_mat[,5:6],
+  thetas = output_draws_mat[,7:8],
+  phis = matrix(0, nrow = NROW(output_draws_mat), ncol = D) #output_draws_mat[,9:10]
+)
+toc()
+```
+
+
+```{r}
 ggplot() +
-  geom_line(data = valid_postpred_draws, aes(x = x_star, y = f_star, 
+  geom_line(data = valid_postpred_draws_df, aes(x = x_star, y = f_star, 
       colour = d_star,
       group = interaction(.draw,d_star))) +
   geom_point(data = input_df, aes(x = t, y = y), size = 1) 
@@ -305,11 +313,6 @@ ggplot() +
 ## Hyperparameter Posteriors
 
 ```{r}
-valid_draws_df <- output$draws(variables = vars, format = "df") |> 
-  subset_draws(chain = valid_chains) |> 
-  as.data.frame() |> 
-  slice(valid_postpred_idx)
-
 sapply(select(valid_draws_df, `w[1]`:deltaTheta), mean)
 ```
 
@@ -375,7 +378,7 @@ valid_draws_df |>
   facet_wrap(vars(name), scales = "free_y")
 ```
 
-```{r}
+```{r eval=FALSE}
 # valid_draws_df |> 
 #   select(.draw, starts_with("phi")) |> 
 #   pivot_longer(2:3) |> 
@@ -402,8 +405,6 @@ valid_draws_df |>
   geom_vline(xintercept = with(input_params, theta[1] - theta[2]), colour = "red")
 ```
 
-
-
 ```{r}
 valid_draws_df |> 
   ggplot() +
@@ -411,22 +412,21 @@ valid_draws_df |>
   geom_point()
 ```
 
-```{r}
+```{r eval=FALSE}
 # valid_draws_df |> 
 #   ggplot() +
 #   aes(x = `phi[1]`, y = `phi[2]`) +
 #   geom_point()
 ```
 
-
-```{r}
+```{r eval=FALSE}
 # valid_draws_df |> 
 #   ggplot() +
 #   aes(x = `phi[1]`, y = `theta[1]`) +
 #   geom_point()
 ```
 
-```{r}
+```{r eval=FALSE}
 # valid_draws_df |> 
 #   ggplot() +
 #   aes(x = `phi[2]`, y = `theta[2]`) +
