@@ -13,7 +13,11 @@ functions {
     return(
       alpha_ij *
       exp(-0.5 * (tau + theta_ij)^2 * Sigma_ij) *
-      cos( 2*pi() * (tau + theta_ij) * mu_ij + phi_ij )
+      // cos( 2*pi() * (tau + theta_ij) * mu_ij + phi_ij )
+      (
+        cos( 2*pi()*(tau + theta_ij)*mu_ij )*cos(phi_ij) -
+        sin( 2*pi()*(tau + theta_ij)*mu_ij )*sin(phi_ij)
+      )
     );
   }
   // Returns the autocovariance between x and x' within band i
@@ -28,7 +32,9 @@ functions {
     return(
       alpha_ii *
       exp(-0.5 * tau^2 * Sigma_i) *
-      cos(2*pi() * tau * mu_i)
+      (
+        cos(2*pi() * tau * mu_i)
+      )
     );
   }
   // Returns the cross-covariance matrix between locations x and x' in
@@ -136,19 +142,19 @@ transformed data {
 parameters {
   vector<lower=0>[D] w;
   vector<lower=0>[D] Sigma;
-  positive_ordered[D] mu;
+  vector<lower=0>[D] mu;
   ordered[D] theta;
   ordered[D] phi;
 }
 transformed parameters {
-  real deltaTheta = theta[1] - theta[2];
+  real deltaTheta = theta[2] - theta[1];
 }
 model {
-  w ~ normal(0, 5.0); // normal(mean, std dev)
-  Sigma ~ normal(0, 1.0);
-  mu ~ normal(0, 5.0);
-  theta ~ normal(0, 1.0);
-  phi ~ normal(0, 1.0);
+  w ~ normal(0, 2.0); // normal(mean, std dev)
+  Sigma ~ normal(0, 2.0);
+  mu ~ normal(0, 10.0);
+  theta ~ normal(0, 2.0);
+  phi ~ normal(0, 2.0);
 
   // N x N covariance KS = K(X,X) + Sigma_noise
   matrix[N, N] KS;

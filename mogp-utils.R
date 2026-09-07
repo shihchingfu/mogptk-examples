@@ -13,7 +13,11 @@ k_ij <- function(x, x_prime,
   return(
     alpha_ij *
       exp(-0.5 * (tau + theta_ij)^2 * Sigma_ij) *
-      cos(2*pi*(tau + theta_ij) * mu_ij + phi_ij) # NB: 2*pi factor
+      # cos(2*pi*(tau + theta_ij) * mu_ij + phi_ij) # NB: 2*pi factor
+      (
+        cos( 2*pi*(tau + theta_ij)*mu_ij )*cos(phi_ij) -
+          sin( 2*pi*(tau + theta_ij)*mu_ij )*sin(phi_ij)
+      )
   )
 }
 
@@ -235,7 +239,7 @@ postpred_Q1_draw <- function(
   # N* x N* covariance K** = K(X*,X*)
   K_starstar <- Kxx_mat(xs_star, ns_star, D, w, Sigma, mu, theta, phi)
 
-  fstar_mu <- t(K_star) %*% solve(K_xx) %*% y
+  fstar_mu <- t(K_star) %*% solve(K_xx) %*% ys
   fstar_Sigma <- K_starstar - t(K_star) %*% solve(K_xx) %*% K_star
 
   diag(fstar_Sigma) <- diag(fstar_Sigma) + epsilon
@@ -248,7 +252,7 @@ postpred_Q1_draw <- function(
 
   result_df <- data.frame(
     d_star = factor(ds_star),
-    x_star,
+    x_star = xs_star,
     f_star = t(f_star)
   )
 
@@ -452,13 +456,9 @@ check_postpred_draws_validity <- function(
 
     return_string <- tryCatch(
       warning = function(cnd) {
-        pp_list[[r]] <- NA
-        valid_pps[r] <- "Warning"
         return("warning")
       },
       error = function(cnd) {
-        pp_list[[r]] <- NA
-        valid_pps[r] <- "Error"
         return("error")
       },
       {
@@ -476,8 +476,10 @@ check_postpred_draws_validity <- function(
 
     if (return_string == "warning") {
       warning_count <- warning_count + 1
+      valid_pps[r] <- "Warning"
     } else if (return_string == "error") {
       error_count <- error_count + 1
+      valid_pps[r] <- "Error"
     } else {
       valid_count <- valid_count + 1
     }
