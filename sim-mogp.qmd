@@ -50,7 +50,7 @@ while (i <= max_attempts && errored) {
         noise_sigma = noise_sigma, 
         seed = seed, 
         masked_pct = pct_missing, 
-        zero_phi = TRUE)
+        zero_phi = FALSE)
       cat( paste0("Completed: i = ", i, ", Seed = ", seed, "\n") )
       FALSE
     },
@@ -67,11 +67,8 @@ if (i > max_attempts && is.null(output)) {
   cat("Maximum attempts reached:", i - 1, "\n")
 }
 
-
-
 output_params <- output[[1]]
 output_df <- output[[2]]
-
 output_params
 ```
 
