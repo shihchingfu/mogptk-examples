@@ -242,6 +242,16 @@ postpred_Q1_draw <- function(
   fstar_mu <- t(K_star) %*% solve(K_xx) %*% ys
   fstar_Sigma <- K_starstar - t(K_star) %*% solve(K_xx) %*% K_star
 
+
+  fsN <- nrow(fstar_Sigma)
+
+  for (ii in 1:fsN) {
+    for (jj in ii:fsN) {
+      fstar_Sigma[jj,ii] <- fstar_Sigma[ii,jj] # enforce symmetry
+    }
+  }
+
+
   diag(fstar_Sigma) <- diag(fstar_Sigma) + epsilon
 
   set.seed(seed)
@@ -322,17 +332,16 @@ batch_check_K_validity <- function(
       {
         Kxx <- Kxx_mat(xs, ns, D,
                        this_w, this_Sigma, this_mu, this_theta, this_phi)
-        chol(Kxx)
+        rmvnorm(n = 1, mean = rep(0, length(xs)), sigma = Kxx)
 
-        K_star = K_mat(xs, xs_star, ds, ds_star, D,
-                       this_w, this_Sigma, this_mu, this_theta, this_phi)
-        chol(K_star)
+        #K_star = K_mat(xs, xs_star, ds, ds_star, D,
+        #               this_w, this_Sigma, this_mu, this_theta, this_phi)
+        #chol(K_star)
 
         K_starstar <- Kxx_mat(xs_star, ns_star, D,
                               this_w, this_Sigma, this_mu, this_theta, this_phi)
-        chol(K_starstar)
+        rmvnorm(n = 1, mean = rep(0, length(xs_star)), sigma = K_starstar)
 
-        #rmvnorm(n = 1, mean = rep(0, length(x)), sigma = Kxx)
         valid_K[r] <- "Valid"
       }
     )
@@ -388,12 +397,6 @@ postpred_from_valid_draws <- function(
   for (r in 1:n_draws) {
     if (r == 1) {
       start_time <- Sys.time()
-
-      cat(
-        paste0(
-          r,"/", n_draws,
-          "\t[", format(difftime(Sys.time(), start_time), digits = 3), "]\n")
-        )
     }
 
     this_w <- ws[r,]
@@ -412,7 +415,7 @@ postpred_from_valid_draws <- function(
     pp_list[[r]] <- new_draw
   }
 
-  if (r %% 100 == 0) {
+  if ( (r %% round(n_draws/20)) == 0 | r == 1 ) {
     cat(
       paste0(
         r,"/", n_draws,
