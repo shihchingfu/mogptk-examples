@@ -62,8 +62,8 @@ functions {
           real Sigma_ij = 2*Sigmas[i] * (Sigmas[i] + Sigmas[j])^-1 * Sigmas[j];
           real mu_ij = (Sigmas[i] + Sigmas[j])^-1 *
                        (Sigmas[i]*mus[j] + Sigmas[j]*mus[i]);
-          real theta_ij = thetas[j] - thetas[i];
-          real phi_ij = phis[j] - phis[i];
+          real theta_ij = thetas[i] - thetas[j];
+          real phi_ij = phis[i] - phis[j];
 
           Kij[r,c] = k_ij(x[r], x_prime[c], w_ij, Sigma_ij, mu_ij, theta_ij, phi_ij);
         }
@@ -153,11 +153,11 @@ transformed parameters {
   vector[2] w = w_std * y_sd;
 }
 model {
-  w_std ~ std_normal(); // normal(mean, std dev)
-  Sigma ~ std_normal();
-  mu ~ std_normal();
-  theta ~ std_normal();
-  phi ~ std_normal();
+  w_std ~ normal(0, 2.0); // normal(mean, std dev)
+  Sigma ~ normal(0, 2.0);
+  mu ~ normal(0, 10.0);
+  theta ~ normal(0, 2.0);
+  phi ~ normal(0, 2.0);
 
   // N x N covariance KS = K(X,X) + Sigma_noise
   matrix[N, N] KS;
