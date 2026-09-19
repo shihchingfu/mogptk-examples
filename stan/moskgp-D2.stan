@@ -8,16 +8,16 @@ functions {
             real theta_ij,
             real phi_ij) {
     real tau = abs(x - x_prime);
-    real alpha_ij = w_ij * sqrt( 2.0 * pi() * abs(Sigma_ij) );
+    real alpha_ij = w_ij * sqrt( 2*pi() * abs(Sigma_ij) );
 
     return(
       alpha_ij *
       exp(-0.5 * (tau + theta_ij)^2 * Sigma_ij) *
-      (
-        cos( 2*pi()*(tau + theta_ij)*mu_ij )*cos(phi_ij) -
-        sin( 2*pi()*(tau + theta_ij)*mu_ij )*sin(phi_ij)
+      cos(
+        2*pi() * (  ( (tau + theta_ij) * mu_ij ) + phi_ij  )
       )
     );
+
   }
   // Returns the autocovariance between x and x' within band i
   real k_ii(real x,
@@ -26,14 +26,12 @@ functions {
             real Sigma_i,
             real mu_i) {
     real tau = abs(x - x_prime);
-    real alpha_ii = w_i^2.0 * sqrt( 2.0 * pi() * abs(Sigma_i) );
+    real alpha_ii = w_i^2 * sqrt( 2*pi() * abs(Sigma_i) );
 
     return(
       alpha_ii *
       exp(-0.5 * tau^2 * Sigma_i) *
-      (
-        cos(2*pi() * tau * mu_i)
-      )
+      cos(2*pi() * tau * mu_i)
     );
   }
   // Returns the cross-covariance matrix between locations x and x' in
@@ -64,8 +62,8 @@ functions {
           real Sigma_ij = 2*Sigmas[i] * (Sigmas[i] + Sigmas[j])^-1 * Sigmas[j];
           real mu_ij = (Sigmas[i] + Sigmas[j])^-1 *
                        (Sigmas[i]*mus[j] + Sigmas[j]*mus[i]);
-          real theta_ij = thetas[i] - thetas[j];
-          real phi_ij = phis[i] - phis[j];
+          real theta_ij = thetas[j] - thetas[i];
+          real phi_ij = phis[j] - phis[i];
 
           Kij[r,c] = k_ij(x[r], x_prime[c], w_ij, Sigma_ij, mu_ij, theta_ij, phi_ij);
         }
@@ -135,9 +133,16 @@ data {
 }
 transformed data {
   real epsilon = 1e-9; // jitter
+  vector[N] y_std;
+  vector[N] y_se_std;
+  real y_mean = mean(y);
+  real y_sd = sd(y);
+
+  y_std = (y - y_mean)/y_sd;
+  y_se_std = y_se/y_sd;
 }
 parameters {
-  vector<lower=0>[2] w;
+  vector<lower=0>[2] w_std;
   vector<lower=0>[2] Sigma;
   vector<lower=0>[2] mu;
   ordered[2] theta;
@@ -145,20 +150,21 @@ parameters {
 }
 transformed parameters {
   real deltaTheta = theta[2] - theta[1];
+  vector[2] w = w_std * y_sd;
 }
 model {
-  w ~ normal(0, 2.0); // normal(mean, std dev)
-  Sigma ~ normal(0, 2.0);
-  mu ~ normal(0, 10.0);
-  theta ~ normal(0, 2.0);
-  phi ~ normal(0, 2.0);
+  w_std ~ std_normal(); // normal(mean, std dev)
+  Sigma ~ std_normal();
+  mu ~ std_normal();
+  theta ~ std_normal();
+  phi ~ std_normal();
 
   // N x N covariance KS = K(X,X) + Sigma_noise
   matrix[N, N] KS;
   KS = Kxx_mat(x, ns, w, Sigma, mu, theta, phi);
-  KS = add_diag(KS, square(y_se));
+  KS = add_diag(KS, square(y_se_std));
 
-  y ~ multi_normal_cholesky(
+  y_std ~ multi_normal_cholesky(
     rep_vector(0, N),
     cholesky_decompose(add_diag(KS, epsilon))
   );
