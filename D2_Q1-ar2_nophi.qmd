@@ -1,0 +1,384 @@
+---
+title: "Fit MOSM GP to toy example"
+format: 
+  html:
+    embed-resources: true
+---
+
+```{r}
+library(here)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(cmdstanr)
+library(posterior)
+library(bayesplot)
+library(astsa)
+
+register_knitr_engine(override = FALSE)
+
+theme_set(theme_bw())
+
+EXECUTE_SAMPLING <- TRUE
+SEED <- round(runif(n = 1, 0, 999))
+SEED
+```
+
+# Data
+
+For a AR(2) model
+
+$$ y_{1,t+1} = ... + \varepsilon_t\qquad y_{1,0} = 0, \quad \varepsilon_t \sim \mathcal{N}(0, \sigma_\varepsilon^2)$$
+$$ y_{2,t+\Delta t} = y_{1,t} + \varepsilon_t, \qquad \Delta t \in [0,1)$$
+
+
+```{r}
+D <- 2
+noise_sigma <- 0.1
+delay <- 0.05
+max_t <- 1
+full_ns <- 200
+ns <- c(80, 120)
+N <- sum(ns)  
+
+build_dataset <- function() {
+
+  t <- seq(from = 0, to = max_t, length.out = full_ns)
+  
+  set.seed(-1)
+  t1 <- t
+  f1 <- sarima.sim(ar = c(0.9, -0.1), n = full_ns)
+  y1 <- f1 + noise_sigma*rnorm(n = length(t1))
+  
+  t2 <- t + delay
+  f2 <- f1
+  y2 <- f2 + noise_sigma*rnorm(n = length(t2))
+  
+  full_df <- data.frame(
+    t = c(t1, t2),
+    f = c(f1, f2),
+    y = c(y1, y2),
+    y_se = rep(noise_sigma, D*full_ns),
+    d = as.integer(rep(1:D, each = full_ns)),
+    y1_mask = 0,
+    y2_mask = 0
+  ) 
+  full_df$y1_mask[sample(1:full_ns, size = ns[1])] <- 1
+  full_df$y2_mask[sample((full_ns+1):(2*full_ns), size = ns[2])] <- 1
+  
+  return(full_df)
+}
+
+full_df <- build_dataset()
+
+input_df <- full_df |> 
+  filter(y1_mask == 1 | y2_mask == 1)
+```
+
+```{r}
+input_plt <- input_df |> 
+  ggplot() +
+  aes(x = t, y = y, colour = factor(d)) +
+  geom_linerange(aes(ymax = y + y_se, ymin = y - y_se), colour = "black") +
+  geom_line(data = full_df, aes(x = t, y = f), alpha = 0.4, linetype = "dashed") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = delay, linetype = "dotted") +
+  geom_point(size = 2) +
+  labs(colour = "Band")
+input_plt
+```
+
+## Target locations
+
+```{r}
+n_star <- 90 # in each band
+N_star <- n_star * D
+ns_star = rep(n_star, D)
+
+star_df <- data.frame(
+  t_star = rep(seq(from = 0, to = max_t, length.out = n_star), D),
+  d_star = as.integer(rep(1:D, each = n_star))
+)
+```
+
+# Model Fitting
+
+```{r}
+mosmgp_nophi_stan <- cmdstan_model(here("stan", "moskgp-nophi.stan"))
+```
+
+```{r}
+SEED
+```
+
+## Sampling
+
+```{r}
+data_list <- list(
+  D = D,
+  N = NROW(input_df),
+  ns = ns,
+  d = input_df$d,
+  x = input_df$t,
+  y = input_df$y,
+  y_se = input_df$y_se,
+  N_star = N_star,
+  ns_star = ns_star,
+  d_star = star_df$d_star,
+  x_star = star_df$t_star
+)
+```
+
+```{r}
+format(start_time <- Sys.time())
+```
+
+```{r}
+if (EXECUTE_SAMPLING) {
+  
+  output <- mosmgp_nophi_stan$sample(
+    data = data_list,
+    seed = SEED,
+    chains = 4,
+    parallel_chains = 4,
+    iter_warmup = 500,
+    iter_sampling = 1000,
+    refresh = 500,
+    show_exceptions = FALSE,
+    show_messages = TRUE
+  )
+  
+  output$save_object(here("quarto", "output", "mosk_toy_rw_nophi.RDS"))
+  
+} else {
+  output <- readRDS(here("quarto", "output", "mosk_toy_rw_nophi.RDS"))
+}
+```
+
+```{r}
+format(finish_time <- Sys.time())
+difftime(finish_time, start_time)  
+```
+
+# Results
+
+```{r}
+vars <- c("w", "Sigma", "mu", "theta", "deltaTheta")
+output$summary(variables = vars, posterior::default_convergence_measures())
+```
+
+```{r}
+mcmc_trace(output$draws(variables = vars))
+```
+
+
+```{r}
+chain1 <- output$draws(
+  variables = vars, format = "df") |> 
+  filter(.chain == 1)
+
+
+mcmc_trace(chain1)
+```
+
+
+## Prior predictive samples
+
+```{r}
+set.seed(SEED)
+
+prior_pred_samples <- output$draws(variables = "f_prior", format = "df") |> 
+  as.data.frame() |> 
+  select(sample = .draw, starts_with("f_prior")) |> 
+  drop_na() |> 
+  arrange(sample)
+
+n_pred_samples <- NROW(prior_pred_samples)
+
+prior_pred_samples |> 
+  slice_sample(n = n_pred_samples) |> 
+  pivot_longer(starts_with("f_prior"), 
+               names_to = "index", 
+               names_pattern = "([0-9]+)") |> 
+  cbind(t = rep(input_df$t, n_pred_samples),
+        y = rep(input_df$y, n_pred_samples),
+        d = factor(rep(input_df$d, n_pred_samples))) |> 
+  ggplot() +
+  aes(x = t, y = value, group = interaction(factor(sample),d), colour = d) +
+  geom_line(alpha = 0.1) +
+  geom_point(aes(y = y), colour = "black", size = 0.5) +
+  facet_grid(rows = vars(d), scales = "free") +
+  labs(title = paste0("Prior predictive samples (seed=", SEED,")")) +
+  theme(legend.position = "none") 
+```
+
+## Hyperparameter Posteriors
+
+```{r}
+mcmc_hist(chain1, facet_args = list(ncol = 4))
+```
+
+```{r}
+mcmc_dens(chain1, facet_args = list(ncol = 4))
+```
+
+```{r}
+# Function estimates the mode of a sample
+estimate_mode <- function(x) {
+  d <- density(x, n = 2^10)
+  d$x[which.max(d$y)]
+}
+
+summarise_draws(chain1)
+```
+
+```{r}
+w_draws <- output$draws(variables = c("w", "w_prior"), format = "df") |> 
+  filter(.chain == 1)
+
+w_draws |> 
+  select(.draw, starts_with("w")) |> 
+  pivot_longer(2:5) |> 
+  drop_na(value) |> 
+  ggplot() +
+  aes(x = value) +
+  geom_histogram() +
+  facet_wrap(vars(name), scales = "free_y")
+```
+
+```{r}
+Sigma_draws <- output$draws(variables = c("Sigma", "Sigma_prior"), format = "df")|> 
+  filter(.chain == 1) 
+
+Sigma_draws |> 
+  select(.draw, starts_with("Sigma")) |> 
+  pivot_longer(2:5) |> 
+  drop_na(value) |> 
+  ggplot() +
+  aes(x = value) +
+  geom_histogram() +
+  facet_wrap(vars(name), scales = "free_y")
+```
+
+```{r}
+mu_draws <- output$draws(variables = c("mu", "mu_prior"), format = "df") |> 
+  filter(.chain == 1)
+
+mu_draws |> 
+  select(.draw, starts_with("mu")) |> 
+  pivot_longer(2:5) |> 
+  drop_na(value) |> 
+  ggplot() +
+  aes(x = value) +
+  geom_histogram() +
+  facet_wrap(vars(name), scales = "free_y")
+```
+
+
+```{r}
+theta_draws <- output$draws(variables = c("theta", "theta_prior"), format = "df") |> 
+  filter(.chain == 1)
+
+theta_draws |> 
+  select(.draw, starts_with("theta")) |> 
+  pivot_longer(2:5) |> 
+  drop_na(value) |> 
+  ggplot() +
+  aes(x = value) +
+  geom_histogram() +
+  facet_wrap(vars(name), scales = "free_y")
+```
+
+```{r}
+mcmc_pairs(
+  output$draws(variables = "w"), 
+  condition = pairs_condition(chains = 1),  
+  off_diag_fun = "hex")
+```
+
+```{r}
+mcmc_pairs(output$draws(variables = c("Sigma", "mu")),condition = pairs_condition(chains = 1),   off_diag_fun = "hex")
+```
+
+```{r}
+mcmc_pairs(output$draws(variables = "theta"),condition = pairs_condition(chains = 1),   off_diag_fun = "hex")
+```
+
+## Posterior Predictive Samples
+
+```{r}
+set.seed(SEED)
+post_pred_samples_wide <- output$draws(variables = "f_star", format = "df") |> 
+  as.data.frame() |> 
+  select(sample = .draw, starts_with("f_star")) |> 
+  arrange(sample) 
+
+post_pred_samples <- post_pred_samples_wide |> 
+  pivot_longer(starts_with("f_star"), 
+               names_to = "index", 
+               names_pattern = "([0-9]+)") |> 
+  cbind(t = star_df$t_star,
+        d = factor(star_df$d_star))
+```
+
+```{r}
+post_pred_samples |> 
+  ggplot() +
+  aes(x = t, y = value, colour = d, group = sample) +
+  geom_line(alpha = 0.05) +
+  facet_grid(rows = vars(d)) +
+  geom_point(data = input_df, mapping = aes(x = t, y = y, group = d), colour = "black", size = 0.5) +
+  labs(y = "y", title = paste0("Posterior predictive samples (seed=", SEED,")")) +
+  theme(legend.position = "none") 
+```
+
+```{r}
+valid_postpred_sample_ids <- post_pred_samples_wide |> 
+  filter(!is.na(`f_star[1]` )) |> 
+  pull(sample)
+
+posterior_draws <- output$draws(variables = vars, format = "df") |> 
+  filter(.draw %in% valid_postpred_sample_ids)
+str(posterior_draws)
+```
+
+```{r}
+summarise_draws(posterior_draws)
+```
+
+
+```{r}
+paste0("delay = ", delay)
+```
+
+
+```{r}
+posterior_draws |> 
+  filter(.chain == 1) |> 
+  pivot_longer(cols = c(`theta[1]`, `theta[2]`), names_to = "Parameter") |> 
+  ggplot() +
+  aes(x = value, fill = Parameter) +
+  geom_density(position = "identity", bins = 50, alpha = 0.5)
+```
+
+```{r}
+estimate_mode(posterior_draws$`theta[1]`)
+estimate_mode(posterior_draws$`theta[2]`)
+```
+
+```{r}
+posterior_draws$deltaTheta
+```
+
+
+```{r}
+posterior_draws |> 
+  ggplot() +
+  aes(x = deltaTheta) +
+  geom_histogram(bins = 50)
+```
+
+```{r}
+median(posterior_draws$deltaTheta)
+```
+
