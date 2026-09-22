@@ -1,5 +1,5 @@
 ---
-title: "Fit MOSM GP to 2-band synthetic example"
+title: "Fit MOSK GP to 2-band synthetic example"
 format: 
   html:
     embed-resources: true
@@ -8,7 +8,7 @@ format:
 This notebook contains the workflow for:
 
 - loading groundtruth 2-band (MOGP) time-series, 
-- fitting a MOGP model, 
+- fitting a MOSK GP model, 
 - checking which posterior draws produce valid covariance matrices, and 
 - visualing the posteriors of the valid draws.
 
@@ -31,7 +31,7 @@ color_scheme_set("viridis") # bayesplot
 
 source(here("mogp-utils.R"))
 
-filename_stub <- "D2-Q1-seed2727-n100-mcar0.2-sigma0.1"
+filename_stub <- "D2-Q1-seed6893-n200-mnar0.3-sigma0.1"
 
 EXECUTE_SAMPLING <- TRUE
 SAMPLING_SEED <- ifelse(EXECUTE_SAMPLING, round(runif(n = 1, 0, 999)), 119)
@@ -134,9 +134,8 @@ output$summary(variables = vars,
 mcmc_trace(output$draws(vars))
 ```
 
-
 ```{r}
-valid_chains <- c(2,3,4)
+valid_chains <- c(1,2,3,4,6)
 output_draws <- output$draws(variables = vars, format = "df") |> 
   subset_draws(chain = valid_chains)
 
@@ -152,7 +151,16 @@ output_draws |> mcmc_trace()
 ```
 
 ```{r}
-output$draws(variables = c("theta")) |> mcmc_pairs()
+output$draws(variables = c("theta")) |>
+  subset_draws(chain = valid_chains) |> 
+  mcmc_pairs()
+```
+
+```{r}
+output$draws(variables = c("deltaTheta")) |>
+  subset_draws(chain = valid_chains) |> 
+  mcmc_hist(bins = 20)
+
 ```
 
 ## Posterior Predictive Check
@@ -181,7 +189,6 @@ posterior_means
 ```{r}
 input_params
 ```
-
 
 ```{r eval=FALSE}
 mean_ws <- posterior_means[c("w[1]", "w[2]")]
@@ -233,7 +240,6 @@ ggplot() +
   geom_point(data = input_df, aes(x = t, y = y, colour = factor(d)), size = 1) 
 ```
 
-
 ```{r eval=FALSE}
 if (EXECUTE_SAMPLING) {
   
@@ -257,54 +263,61 @@ if (EXECUTE_SAMPLING) {
 }
 ```
 
-### Test code for faster validity checking
-
-
-```{r eval=FALSE}
-tic()
-valid_draws_checks <- batch_check_K_validity(
-  xs = input_df$t, xs_star = star_df$t_star, 
-  ds = input_df$d, ds_star = star_df$d_star, 
-  ns = ns, ns_star = ns_star,
-  D = D,
-  ws = output_draws_mat[,1:2],
-  Sigmas = output_draws_mat[,3:4],
-  mus = output_draws_mat[,5:6],
-  thetas = output_draws_mat[,7:8],
-  phis = output_draws_mat[,9:10] # matrix(0, nrow = NROW(output_draws_mat), ncol = D) 
-)
-toc()
-```
+### Validity checking
 
 ```{r}
-table(valid_draws_checks)
-```
+if (EXECUTE_SAMPLING) {
+  tic()
+  valid_draws_checks <- batch_check_K_validity(
+    xs = input_df$t, xs_star = star_df$t_star, 
+    ds = input_df$d, ds_star = star_df$d_star, 
+    ns = ns, ns_star = ns_star,
+    D = D,
+    ws = output_draws_mat[,c("w[1]", "w[2]")],
+    Sigmas = output_draws_mat[,c("Sigma[1]", "Sigma[2]")],
+    mus = output_draws_mat[,c("mu[1]", "mu[2]")],
+    thetas = output_draws_mat[,c("theta[1]", "theta[2]")],
+    phis = output_draws_mat[,c("phi[1]", "phi[2]")]
+  )
+  toc()
+  
+  valid_draws_idx <- which(valid_draws_checks == "Valid") #which(valid_draws_checks == "Warning")
+  valid_draws_df <- output_draws[valid_draws_idx,]
 
+  write_rds(valid_draws_df, here("RDS", glue("{filename_stub}_valid.RDS")))
+} else {
+  valid_draws_df <- read_rds(here("RDS", glue("{filename_stub}_valid.RDS")))
+}
 
-```{r}
-valid_draws_idx <- which(valid_draws_checks == "Valid") #which(valid_draws_checks == "Warning")
-valid_draws_df <- output_draws[valid_draws_idx,]
 valid_draws_mat <- as.matrix(valid_draws_df)
 nrow(valid_draws_mat)
 ```
 
-```{r eval=FALSE}
-tic()
-valid_postpred_draws_df <- postpred_from_valid_draws(
-  xs = input_df$t, ys = input_df$y, ys_se = input_df$y_se, 
-  ds = input_df$d, ns = ns, 
-  xs_star = star_df$t_star, 
-  ds_star = star_df$d_star, ns_star = ns_star,
-  D = D,
-  ws = valid_draws_mat[,1:2],
-  Sigmas = valid_draws_mat[,3:4],
-  mus = valid_draws_mat[,5:6],
-  thetas = valid_draws_mat[,7:8],
-  phis = valid_draws_mat[,9:10] # matrix(0, nrow = NROW(output_draws_mat), ncol = D) 
-)
-toc()
-```
+```{r warning=FALSE}
+if (EXECUTE_SAMPLING) {
+  
+  tic()
+  valid_postpred_draws_df <- postpred_from_valid_draws(
+    xs = input_df$t, ys = input_df$y, ys_se = input_df$y_se, 
+    ds = input_df$d, ns = ns, 
+    xs_star = star_df$t_star, 
+    ds_star = star_df$d_star, ns_star = ns_star,
+    D = D,
+    ws = valid_draws_mat[,c("w[1]", "w[2]")],
+    Sigmas = valid_draws_mat[,c("Sigma[1]", "Sigma[2]")],
+    mus = valid_draws_mat[,c("mu[1]", "mu[2]")],
+    thetas = valid_draws_mat[,c("theta[1]", "theta[2]")],
+    phis = valid_draws_mat[,c("phi[1]", "phi[2]")] 
+  )
+  toc()
+  
+  write_rds(valid_postpred_draws_df, here("RDS", glue("{filename_stub}_valid_postpred.RDS")))
+} else {
+  valid_postpred_draws_df <- read_rds(here("RDS", glue("{filename_stub}_valid_postpred.RDS")))
+}
 
+nrow(valid_postpred_draws_df)
+```
 
 ```{r eval=FALSE}
 ggplot() +
@@ -312,24 +325,23 @@ ggplot() +
       colour = d_star,
       group = interaction(.draw,d_star))) +
   geom_point(data = input_df, aes(x = t, y = y), size = 1) 
-
 ```
 
 ## Hyperparameter Posteriors
 
 ```{r}
-estimated_params <- sapply(select(valid_draws_df, `w[1]`:deltaTheta), mean)
+estimated_params <- sapply(select(valid_draws_df, matches(vars)), mean)
 estimated_params
 ```
 
 ```{r}
 # Function estimates the mode of a sample
 estimate_mode <- function(x) {
-  d <- density(x, n = 2^10)
+  d <- density(x, n = 2^6)
   d$x[which.max(d$y)]
 }
 
-sapply(select(valid_draws_df, `w[1]`:deltaTheta), estimate_mode)
+sapply(select(valid_draws_df, matches(vars)), estimate_mode)
 ```
 
 ```{r}
@@ -343,7 +355,7 @@ estimated_params['deltaTheta']
 
 ```{r}
 valid_draws_df |> 
-  select(.draw, starts_with("w")) |> 
+  select(.draw, starts_with("w[")) |> 
   pivot_longer(2:3) |> 
   drop_na(value) |> 
   ggplot() +
@@ -408,7 +420,7 @@ valid_draws_df |>
 valid_draws_df |> 
   ggplot() +
   aes(x = deltaTheta) +
-  geom_histogram() +
+  geom_histogram(bins = 30) +
   geom_vline(xintercept = with(input_params, theta[2] - theta[1]), colour = "red")
 ```
 
@@ -439,26 +451,3 @@ valid_draws_df |>
   aes(x = `phi[2]`, y = `theta[2]`) +
   geom_point()
 ```
-
-```{r}
-library(ncdf4)
-ncin <- nc_open(here("ncdf", glue("{filename_stub}.nc")))
-
-theta_mat <- ncvar_get(ncin, "posterior/theta")
-dim(theta_mat)
-```
-
-```{r}
-deltaTheta_mat <- theta_mat[2,,] - theta_mat[1,,] 
-hist( c(deltaTheta_mat), breaks = 20 )
-```
-
-```{r}
-hist( valid_draws_df$deltaTheta, breaks = 20 )
-```
-
-
-```{r}
-diff(input_params$theta)
-```
-

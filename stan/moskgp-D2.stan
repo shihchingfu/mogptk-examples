@@ -144,7 +144,7 @@ transformed data {
 parameters {
   vector<lower=0>[2] w_std;
   vector<lower=0>[2] Sigma;
-  vector<lower=0>[2] mu;
+  positive_ordered[2] mu;
   ordered[2] theta;
   ordered[2] phi;
 }
