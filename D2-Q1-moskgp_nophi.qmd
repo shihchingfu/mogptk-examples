@@ -8,7 +8,7 @@ format:
 This notebook contains the workflow for:
 
 - loading groundtruth 2-band (MOGP) time-series, 
-- fitting a MOSK GP model, 
+- fitting a MOSK GP model without $\phi$ parameter, 
 - checking which posterior draws produce valid covariance matrices, and 
 - visualing the posteriors of the valid draws.
 
@@ -31,7 +31,7 @@ color_scheme_set("viridis") # bayesplot
 
 source(here("mogp-utils.R"))
 
-filename_stub <- "D2-Q1-seed6893-n200-mnar0.3-sigma0.1"
+filename_stub <- "D2-Q1-seed2727-n100-mcar0.2-sigma0.1"
 
 EXECUTE_SAMPLING <- FALSE
 # SAMPLING_SEED <- ifelse(EXECUTE_SAMPLING, round(runif(n = 1, 0, 999)), 119)
@@ -79,7 +79,7 @@ input_params
 # Model Fitting
 
 ```{r}
-stan_model <- cmdstan_model(here("stan", "moskgp-D2.stan"))
+stan_model <- cmdstan_model(here("stan", "moskgp-D2-nophi.stan"))
 ```
 ## Sampling
 
@@ -114,11 +114,11 @@ if (EXECUTE_SAMPLING) {
   )
   
   output$save_object(
-    here("RDS", glue("{filename_stub}_moskgp-D2_all.RDS")))
+    here("RDS", glue("{filename_stub}_moskgp-D2-nophi_all.RDS")))
   
 } else {
   output <- readRDS(
-    here("RDS", glue("{filename_stub}_moskgp-D2_all.RDS")))
+    here("RDS", glue("{filename_stub}_moskgp-D2-nophi_all.RDS")))
 }
 ```
 
@@ -130,7 +130,7 @@ difftime(finish_time, start_time)
 # Results
 
 ```{r}
-vars <- c("w_std", "w", "Sigma", "mu", "theta", "phi", "deltaTheta")
+vars <- c("w_std", "w", "Sigma", "mu", "theta", "deltaTheta")
 output$summary(variables = vars, 
                posterior::default_convergence_measures())
 ```
@@ -140,7 +140,7 @@ mcmc_trace(output$draws(vars))
 ```
 
 ```{r}
-valid_chains <- c(2,4,6)
+valid_chains <- 1:6
 output_draws <- output$draws(variables = vars, format = "df") |> 
   subset_draws(chain = valid_chains)
 
@@ -284,17 +284,16 @@ if (EXECUTE_SAMPLING) {
     ws = output_draws_mat[,c("w[1]", "w[2]")],
     Sigmas = output_draws_mat[,c("Sigma[1]", "Sigma[2]")],
     mus = output_draws_mat[,c("mu[1]", "mu[2]")],
-    thetas = output_draws_mat[,c("theta[1]", "theta[2]")],
-    phis = output_draws_mat[,c("phi[1]", "phi[2]")]
+    thetas = output_draws_mat[,c("theta[1]", "theta[2]")]
   )
   toc()
   
   valid_draws_idx <- which(valid_draws_checks == "Valid") #which(valid_draws_checks == "Warning")
   valid_draws_df <- output_draws[valid_draws_idx,]
 
-  write_rds(valid_draws_df, here("RDS", glue("{filename_stub}_moskgp-D2_post.RDS")))
+  write_rds(valid_draws_df, here("RDS", glue("{filename_stub}_moskgp-D2-nophi_post.RDS")))
 } else {
-  valid_draws_df <- read_rds(here("RDS", glue("{filename_stub}_moskgp-D2_post.RDS")))
+  valid_draws_df <- read_rds(here("RDS", glue("{filename_stub}_moskgp-D2-nophi_post.RDS")))
 }
 
 valid_draws_mat <- as.matrix(valid_draws_df)
@@ -314,14 +313,13 @@ if (EXECUTE_SAMPLING) {
     ws = valid_draws_mat[,c("w[1]", "w[2]")],
     Sigmas = valid_draws_mat[,c("Sigma[1]", "Sigma[2]")],
     mus = valid_draws_mat[,c("mu[1]", "mu[2]")],
-    thetas = valid_draws_mat[,c("theta[1]", "theta[2]")],
-    phis = valid_draws_mat[,c("phi[1]", "phi[2]")] 
+    thetas = valid_draws_mat[,c("theta[1]", "theta[2]")]
   )
   toc()
   
-  write_rds(valid_postpred_draws_df, here("RDS", glue("{filename_stub}_moskgp-D2_postpred.RDS")))
+  write_rds(valid_postpred_draws_df, here("RDS", glue("{filename_stub}_moskgp-D2-nophi_postpred.RDS")))
 } else {
-  valid_postpred_draws_df <- read_rds(here("RDS", glue("{filename_stub}_moskgp-D2_postpred.RDS")))
+  valid_postpred_draws_df <- read_rds(here("RDS", glue("{filename_stub}_moskgp-D2-nophi_postpred.RDS")))
 }
 
 nrow(valid_postpred_draws_df)
@@ -400,17 +398,6 @@ valid_draws_df |>
 ```
 
 ```{r}
-valid_draws_df |>
-  select(.draw, starts_with("phi")) |>
-  pivot_longer(2:3) |>
-  drop_na(value) |>
-  ggplot() +
-  aes(x = value) +
-  geom_histogram() +
-  facet_wrap(vars(name), scales = "free_y")
-```
-
-```{r}
 valid_draws_df |> 
   pivot_longer(cols = c(`theta[1]`, `theta[2]`), names_to = "Parameter") |> 
   ggplot() +
@@ -422,7 +409,7 @@ valid_draws_df |>
 valid_draws_df |> 
   ggplot() +
   aes(x = deltaTheta) +
-  geom_histogram(bins = 30) +
+  geom_density() +
   geom_vline(xintercept = with(input_params, theta[2] - theta[1]), colour = "red")
 ```
 
@@ -430,26 +417,5 @@ valid_draws_df |>
 valid_draws_df |> 
   ggplot() +
   aes(x = `theta[1]`, y = `theta[2]`) +
-  geom_point()
-```
-
-```{r}
-valid_draws_df |> 
-  ggplot() +
-  aes(x = `phi[1]`, y = `phi[2]`) +
-  geom_point()
-```
-
-```{r}
-valid_draws_df |> 
-  ggplot() +
-  aes(x = `phi[1]`, y = `theta[1]`) +
-  geom_point()
-```
-
-```{r}
-valid_draws_df |> 
-  ggplot() +
-  aes(x = `phi[2]`, y = `theta[2]`) +
   geom_point()
 ```

@@ -7,13 +7,16 @@ functions {
             real mu_ij,
             real theta_ij) {
     real tau = abs(x - x_prime);
-    real alpha_ij = w_ij * sqrt( 2.0 * pi() * abs(Sigma_ij) );
+    real alpha_ij = w_ij * sqrt( 2*pi() * abs(Sigma_ij) );
 
     return(
       alpha_ij *
       exp(-0.5 * (tau + theta_ij)^2 * Sigma_ij) *
-      cos( 2*pi() * (tau + theta_ij) * mu_ij )
+      cos(
+        2*pi() * ( (tau + theta_ij) * mu_ij )
+      )
     );
+
   }
   // Returns the autocovariance between x and x' within band i
   real k_ii(real x,
@@ -22,7 +25,7 @@ functions {
             real Sigma_i,
             real mu_i) {
     real tau = abs(x - x_prime);
-    real alpha_ii = w_i^2.0 * sqrt( 2.0 * pi() * abs(Sigma_i) );
+    real alpha_ii = w_i^2 * sqrt( 2*pi() * abs(Sigma_i) );
 
     return(
       alpha_ii *
@@ -65,18 +68,17 @@ functions {
     }
     return(Kij);
   }
-  // Returns the square multi-band cross-variance matrix, comprising D x D
+  // Returns the square multi-band cross-variance matrix, comprising 2 x 2
   // K_ij submatrices, evaluated between vectors of points x with itself
   matrix Kxx_mat(vector x,
-               int D,
                array[] int ns,
                vector ws,
                vector Sigmas,
                vector mus,
                vector thetas) {
 
-    array[D] int end_idx = cumulative_sum(ns);
-    array[D] int start_idx = to_int(
+    array[2] int end_idx = cumulative_sum(ns);
+    array[2] int start_idx = to_int(
       to_array_1d(1 + (
         to_vector(cumulative_sum(ns)) -
         to_vector(ns))
@@ -87,8 +89,8 @@ functions {
 
     matrix[N, N] Kmat;
 
-    for (i in 1:D) {
-      for (j in 1:D) {
+    for (i in 1:2) {
+      for (j in 1:2) {
 
         int nrows = ns[i];
         int ncols = ns[j];
@@ -118,38 +120,45 @@ functions {
   }
 }
 data {
-  int<lower=1> D; // no. bands
   int<lower=1> N; // no. observations
-  array[D] int<lower=0> ns; // no. observations in each band
-  array[N] int<lower=1, upper=D> d; // band of each observation
+  array[2] int<lower=0> ns; // no. observations in each band
+  array[N] int<lower=1, upper=2> d; // band of each observation
   vector[N] x;
   vector[N] y;
   vector[N] y_se;
 }
 transformed data {
   real epsilon = 1e-9; // jitter
+  vector[N] y_std;
+  vector[N] y_se_std;
+  real y_mean = mean(y);
+  real y_sd = sd(y);
+
+  y_std = (y - y_mean)/y_sd;
+  y_se_std = y_se/y_sd;
 }
 parameters {
-  vector<lower=0>[D] w;
-  vector<lower=0>[D] Sigma;
-  positive_ordered[D] mu;
-  ordered[D] theta;
+  vector<lower=0>[2] w_std;
+  vector<lower=0>[2] Sigma;
+  positive_ordered[2] mu;
+  ordered[2] theta;
 }
 transformed parameters {
-  real deltaTheta = theta[1] - theta[2];
+  real deltaTheta = theta[2] - theta[1];
+  vector[2] w = w_std * y_sd;
 }
 model {
-  w ~ normal(0, 5.0); // normal(mean, std dev)
-  Sigma ~ normal(0, 1.0);
-  mu ~ normal(0, 5.0);
-  theta ~ normal(0, 1.0);
+  w_std ~ normal(0, 2.0); // normal(mean, std dev)
+  Sigma ~ normal(0, 2.0);
+  mu ~ normal(0, 10.0);
+  theta ~ normal(0, 2.0);
 
   // N x N covariance KS = K(X,X) + Sigma_noise
   matrix[N, N] KS;
-  KS = Kxx_mat(x, D, ns, w, Sigma, mu, theta);
-  KS = add_diag(KS, square(y_se));
+  KS = Kxx_mat(x, ns, w, Sigma, mu, theta);
+  KS = add_diag(KS, square(y_se_std));
 
-  y ~ multi_normal_cholesky(
+  y_std ~ multi_normal_cholesky(
     rep_vector(0, N),
     cholesky_decompose(add_diag(KS, epsilon))
   );
