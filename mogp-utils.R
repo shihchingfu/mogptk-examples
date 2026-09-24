@@ -302,7 +302,7 @@ batch_check_K_validity <- function(
     ds, ds_star,
     ns, ns_star,
     D,
-    ws, Sigmas, mus, thetas, phis) {
+    ws, Sigmas, mus, thetas, phis = thetas*0) {
 
   n_draws <- NROW(ws)
   valid_K <- rep("", n_draws)
@@ -387,7 +387,7 @@ postpred_from_valid_draws <- function(
     xs, ys, ys_se, ds, ns,
     xs_star, ds_star, ns_star,
     D,
-    ws, Sigmas, mus, thetas, phis,
+    ws, Sigmas, mus, thetas, phis = 0*thetas,
     seed = NULL,
     epsilon = 1e-9) {
 
