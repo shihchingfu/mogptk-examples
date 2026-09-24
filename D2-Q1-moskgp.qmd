@@ -33,13 +33,18 @@ source(here("mogp-utils.R"))
 
 filename_stub <- "D2-Q1-seed6893-n200-mnar0.3-sigma0.1"
 
-EXECUTE_SAMPLING <- TRUE
-SAMPLING_SEED <- ifelse(EXECUTE_SAMPLING, round(runif(n = 1, 0, 999)), 119)
-SAMPLING_SEED
+EXECUTE_SAMPLING <- FALSE
+# SAMPLING_SEED <- ifelse(EXECUTE_SAMPLING, round(runif(n = 1, 0, 999)), 119)
 
 N_CHAINS <- 6
 N_WARMUP <- 1000
 N_SAMPLES <- 1000
+
+# Function estimates the mode of a sample
+estimate_mode <- function(x) {
+  d <- density(x, n = 2^6)
+  d$x[which.max(d$y)]
+}
 ```
 
 ```{r}
@@ -98,7 +103,7 @@ if (EXECUTE_SAMPLING) {
   
   output <- stan_model$sample(
     data = data_list,
-    seed = SAMPLING_SEED,
+    #seed = SAMPLING_SEED,
     chains = N_CHAINS,
     parallel_chains = N_CHAINS,
     iter_warmup = N_WARMUP,
@@ -109,11 +114,11 @@ if (EXECUTE_SAMPLING) {
   )
   
   output$save_object(
-    here("RDS", glue("{filename_stub}_moskgp-D2.RDS")))
+    here("RDS", glue("{filename_stub}_moskgp-D2_all.RDS")))
   
 } else {
   output <- readRDS(
-    here("RDS", glue("{filename_stub}_moskgp-D2.RDS")))
+    here("RDS", glue("{filename_stub}_moskgp-D2_all.RDS")))
 }
 ```
 
@@ -135,7 +140,7 @@ mcmc_trace(output$draws(vars))
 ```
 
 ```{r}
-valid_chains <- c(1,2,3,4,6)
+valid_chains <- c(2,4,6)
 output_draws <- output$draws(variables = vars, format = "df") |> 
   subset_draws(chain = valid_chains)
 
@@ -159,8 +164,7 @@ output$draws(variables = c("theta")) |>
 ```{r}
 output$draws(variables = c("deltaTheta")) |>
   subset_draws(chain = valid_chains) |> 
-  mcmc_hist(bins = 20)
-
+  mcmc_hist(bins = 30)
 ```
 
 ## Posterior Predictive Check
@@ -184,6 +188,10 @@ posterior_means <- as.data.frame(output_draws) |>
   select(matches(vars)) |> 
   colMeans()
 posterior_means
+```
+
+```{r}
+sapply(select(output_draws, matches(vars)), estimate_mode)
 ```
 
 ```{r}
@@ -284,9 +292,9 @@ if (EXECUTE_SAMPLING) {
   valid_draws_idx <- which(valid_draws_checks == "Valid") #which(valid_draws_checks == "Warning")
   valid_draws_df <- output_draws[valid_draws_idx,]
 
-  write_rds(valid_draws_df, here("RDS", glue("{filename_stub}_valid.RDS")))
+  write_rds(valid_draws_df, here("RDS", glue("{filename_stub}_moskgp-D2_post.RDS")))
 } else {
-  valid_draws_df <- read_rds(here("RDS", glue("{filename_stub}_valid.RDS")))
+  valid_draws_df <- read_rds(here("RDS", glue("{filename_stub}_moskgp-D2_post.RDS")))
 }
 
 valid_draws_mat <- as.matrix(valid_draws_df)
@@ -311,9 +319,9 @@ if (EXECUTE_SAMPLING) {
   )
   toc()
   
-  write_rds(valid_postpred_draws_df, here("RDS", glue("{filename_stub}_valid_postpred.RDS")))
+  write_rds(valid_postpred_draws_df, here("RDS", glue("{filename_stub}_moskgp-D2_postpred.RDS")))
 } else {
-  valid_postpred_draws_df <- read_rds(here("RDS", glue("{filename_stub}_valid_postpred.RDS")))
+  valid_postpred_draws_df <- read_rds(here("RDS", glue("{filename_stub}_moskgp-D2_postpred.RDS")))
 }
 
 nrow(valid_postpred_draws_df)
@@ -335,12 +343,6 @@ estimated_params
 ```
 
 ```{r}
-# Function estimates the mode of a sample
-estimate_mode <- function(x) {
-  d <- density(x, n = 2^6)
-  d$x[which.max(d$y)]
-}
-
 sapply(select(valid_draws_df, matches(vars)), estimate_mode)
 ```
 
@@ -431,21 +433,21 @@ valid_draws_df |>
   geom_point()
 ```
 
-```{r eval=FALSE}
+```{r}
 valid_draws_df |> 
   ggplot() +
   aes(x = `phi[1]`, y = `phi[2]`) +
   geom_point()
 ```
 
-```{r eval=FALSE}
+```{r}
 valid_draws_df |> 
   ggplot() +
   aes(x = `phi[1]`, y = `theta[1]`) +
   geom_point()
 ```
 
-```{r eval=FALSE}
+```{r}
 valid_draws_df |> 
   ggplot() +
   aes(x = `phi[2]`, y = `theta[2]`) +
