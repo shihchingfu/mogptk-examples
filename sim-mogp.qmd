@@ -50,7 +50,7 @@ while (i <= max_attempts && errored) {
         noise_sigma = noise_sigma, 
         seed = seed, 
         masked_pct = pct_missing, 
-        zero_phi = FALSE)
+        zero_phi = TRUE)
       cat( paste0("Completed: i = ", i, ", Seed = ", seed, "\n") )
       FALSE
     },
