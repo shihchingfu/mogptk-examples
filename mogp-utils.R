@@ -13,11 +13,7 @@ k_ij <- function(x, x_prime,
   return(
     alpha_ij *
       exp(-0.5 * (tau + theta_ij)^2 * Sigma_ij) *
-      # cos(2*pi*(tau + theta_ij) * mu_ij + phi_ij) # NB: 2*pi factor
-      (
-        cos( 2*pi*(tau + theta_ij)*mu_ij )*cos(phi_ij) -
-          sin( 2*pi*(tau + theta_ij)*mu_ij )*sin(phi_ij)
-      )
+      cos(2*pi*( (tau + theta_ij) * mu_ij + phi_ij )) # NB: 2*pi factor
   )
 }
 
