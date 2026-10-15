@@ -144,14 +144,14 @@ parameters {
   ordered[2] theta;
 }
 transformed parameters {
-  real deltaTheta = theta[2] - theta[1];
+  real deltaTheta = theta[1] - theta[2];
   vector[2] w = w_std * y_sd;
 }
 model {
-  w_std ~ normal(0, 2.0); // normal(mean, std dev)
-  Sigma ~ normal(0, 2.0);
+  w_std ~ normal(0, 10.0); // normal(mean, std dev)
+  Sigma ~ normal(0, 10.0);
   mu ~ normal(0, 10.0);
-  theta ~ normal(0, 2.0);
+  theta ~ uniform(-1, 1);
 
   // N x N covariance KS = K(X,X) + Sigma_noise
   matrix[N, N] KS;

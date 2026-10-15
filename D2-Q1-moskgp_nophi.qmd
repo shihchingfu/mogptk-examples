@@ -31,9 +31,9 @@ color_scheme_set("viridis") # bayesplot
 
 source(here("mogp-utils.R"))
 
-filename_stub <- "D2-Q1-seed2727-n100-mcar0.2-sigma0.1"
+filename_stub <- "D2-Q1-seed6814-n200-mnar0.3-sigma0.1"
 
-EXECUTE_SAMPLING <- FALSE
+EXECUTE_SAMPLING <- TRUE
 # SAMPLING_SEED <- ifelse(EXECUTE_SAMPLING, round(runif(n = 1, 0, 999)), 119)
 
 N_CHAINS <- 6
@@ -140,7 +140,7 @@ mcmc_trace(output$draws(vars))
 ```
 
 ```{r}
-valid_chains <- 1:6
+valid_chains <- c(1,2,3,4,5,6)
 output_draws <- output$draws(variables = vars, format = "df") |> 
   subset_draws(chain = valid_chains)
 
@@ -164,7 +164,7 @@ output$draws(variables = c("theta")) |>
 ```{r}
 output$draws(variables = c("deltaTheta")) |>
   subset_draws(chain = valid_chains) |> 
-  mcmc_hist(bins = 30)
+  mcmc_dens()
 ```
 
 ## Posterior Predictive Check
@@ -203,7 +203,6 @@ mean_ws <- posterior_means[c("w[1]", "w[2]")]
 mean_Sigmas <- posterior_means[c("Sigma[1]", "Sigma[2]")]
 mean_mus <- posterior_means[c("mu[1]", "mu[2]")]
 mean_thetas <- posterior_means[c("theta[1]", "theta[2]")]
-mean_phis <- posterior_means[c("phi[1]", "phi[2]")]
 
 n_draws <- 10
 
@@ -212,7 +211,7 @@ mean_draws <- postpred_Q1_draws(
   xs = input_df$t, ys = input_df$y, ys_se = input_df$y_se, ds = input_df$d, ns = ns,  
   xs_star = star_df$t_star, ds_star = star_df$d_star, ns_star = ns_star, 
   D = D, 
-  w = mean_ws, Sigma = mean_Sigmas, mu = mean_mus, theta = mean_thetas, phi = mean_phis
+  w = mean_ws, Sigma = mean_Sigmas, mu = mean_mus, theta = mean_thetas, phi = c(0,0)
 )
 
 ggplot() +
@@ -230,14 +229,13 @@ this_w <- output_draws_mat[r, c("w[1]", "w[2]")]
 this_Sigma <- output_draws_mat[r, c("Sigma[1]", "Sigma[2]")]
 this_mu <- output_draws_mat[r, c("mu[1]", "mu[2]")]
 this_theta <- output_draws_mat[r, c("theta[1]", "theta[2]")]
-this_phi <- output_draws_mat[r, c("phi[1]", "phi[2]")]
 
 pp_draws <- postpred_Q1_draws(
   n_draws = 10,
   xs = input_df$t, ys = input_df$y, ys_se = input_df$y_se, ds = input_df$d, ns = ns,  
   xs_star = star_df$t_star, ds_star = star_df$d_star, ns_star = ns_star, 
   D = D, 
-  w = this_w, Sigma = this_Sigma, mu = this_mu, theta = this_theta, phi = this_phi
+  w = this_w, Sigma = this_Sigma, mu = this_mu, theta = this_theta, phi = c(0,0)
 )
 
 ggplot() +
@@ -336,12 +334,12 @@ ggplot() +
 ## Hyperparameter Posteriors
 
 ```{r}
-estimated_params <- sapply(select(valid_draws_df, matches(vars)), mean)
-estimated_params
+sapply(select(valid_draws_df, matches(vars)), mean)
 ```
 
 ```{r}
-sapply(select(valid_draws_df, matches(vars)), estimate_mode)
+estimated_params <- sapply(select(valid_draws_df, matches(vars)), estimate_mode)
+estimated_params
 ```
 
 ```{r}
@@ -349,9 +347,13 @@ input_params
 ```
 
 ```{r}
-diff(input_params$theta)
-estimated_params['deltaTheta']
+with(input_params, theta[2] - theta[1])
 ```
+
+```{r}
+(2*pi)/estimated_params['deltaTheta']
+```
+
 
 ```{r}
 valid_draws_df |> 
@@ -409,8 +411,9 @@ valid_draws_df |>
 valid_draws_df |> 
   ggplot() +
   aes(x = deltaTheta) +
-  geom_density() +
-  geom_vline(xintercept = with(input_params, theta[2] - theta[1]), colour = "red")
+  geom_histogram() +
+  geom_vline(xintercept = with(input_params, theta[1] - theta[2]), colour = "red") +
+  geom_vline(xintercept = estimated_params['deltaTheta'], colour = "blue")
 ```
 
 ```{r}

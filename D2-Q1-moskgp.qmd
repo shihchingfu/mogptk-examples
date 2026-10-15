@@ -31,9 +31,9 @@ color_scheme_set("viridis") # bayesplot
 
 source(here("mogp-utils.R"))
 
-filename_stub <- "D2-Q1-seed6893-n200-mnar0.3-sigma0.1"
+filename_stub <- "D2-Q1-seed97477-n200-mnar0.3-sigma0.1"
 
-EXECUTE_SAMPLING <- FALSE
+EXECUTE_SAMPLING <- TRUE
 # SAMPLING_SEED <- ifelse(EXECUTE_SAMPLING, round(runif(n = 1, 0, 999)), 119)
 
 N_CHAINS <- 6

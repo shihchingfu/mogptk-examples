@@ -30,8 +30,8 @@ The purpose of this notebook is to generate draws from a multi-output spectral m
 D <- 2
 Q <- 1
 
-n_points_per_band <- 100
-max_attempts <- 10
+n_points_per_band <- 150
+max_attempts <- 500
 
 pct_missing <- 0.3
 noise_sigma <- 0.1
@@ -44,18 +44,19 @@ while (i <= max_attempts && errored) {
   seed <- round(runif(1, min = 0, max = 99999))
   errored <- tryCatch(
     {
-      output <- simulate_Q1_moskgp(
-        D = D, 
+      output <- simulate_D2Q1phi0_moskgp(
+        tstart = 0,
+        tend = 1,
         n_per_band = n_points_per_band, 
         noise_sigma = noise_sigma, 
         seed = seed, 
-        masked_pct = pct_missing, 
-        zero_phi = TRUE)
-      cat( paste0("Completed: i = ", i, ", Seed = ", seed, "\n") )
+        masked_pct = pct_missing 
+      )
+      cat( paste0("Completed: i = ", i, ", Seed = ", seed, "\t *** \t\n") )
       FALSE
     },
     warning = function(cnd) {
-      cat( paste0("Warning: i = ", i, ", Seed = ", seed, " \"", conditionMessage(cnd), "\"\n") )
+      cat( paste0("Warning: i = ", i, ", Seed = ", seed, " \"", conditionMessage(cnd), "\"\r") )
       TRUE
     },
     finally = {
@@ -73,8 +74,43 @@ output_params
 ```
 
 ```{r}
-str(output_df)
+cat("w_12 =", w_12 <- output_params$w[1]*output_params$w[2] * 
+      exp( -pi^2*(output_params$mu[1]-output_params$mu[2])^2 * (output_params$Sigma[1]+output_params$Sigma[2])^-1 ) )
+cat("\nSigma_12 =", Sigma_12 <- 2*output_params$Sigma[1] * (output_params$Sigma[1] + output_params$Sigma[2])^-1 * output_params$Sigma[2])
+cat("\nmu_12 =", mu_12 <- (output_params$Sigma[1] + output_params$Sigma[2])^-1 * 2*pi * (output_params$Sigma[1]*output_params$mu[2] + output_params$Sigma[2]*output_params$mu[1]))
+cat("\ntheta_12 =", theta_12 <- output_params$theta[1] - output_params$theta[2])
+cat("\nalpha_12 =", alpha_12 <- w_12*sqrt( 2*pi * Sigma_12 ) )
 ```
+
+$$k_{ij}(\tau) = \alpha_{ij} \exp\left( -\frac{1}{2} (\tau + \theta_{ij})^2 \Sigma_{ij}\right) \cos\left[ (\tau + \theta_{ij})\mu_{ij}\right]$$
+
+```{r}
+data.frame(
+  tau = seq(from = 0, to = 1, by = 0.001)
+) |> 
+  mutate(k12  = alpha_12 * exp(-0.5 * (tau + theta_12)^2 * Sigma_12) * cos( (tau + theta_12) * mu_12 ) ) |> 
+  ggplot() +
+  aes(x = tau, y = k12) +
+  geom_line() +
+  geom_vline(xintercept = -theta_12, colour = "red")
+
+```
+
+```{r}
+output_df |> 
+  ggplot() +
+  aes(x = t, y = f, colour = d) +
+  geom_line() +
+  labs(title = paste0("Seed = ", output_params$seed, 
+                     ", mu = ", output_params$mu[1], 
+                     ", theta = ", output_params$theta[2]), 
+       alpha = "Observed", colour = "Band") +
+  theme(legend.position = "none")
+```
+
+
+
+
 
 ```{r}
 output_df |> 
@@ -84,6 +120,10 @@ output_df |>
   geom_rug(sides = "b", position = "jitter") +
   labs(title = paste("Seed =", output_params$seed), alpha = "Observed", colour = "Band") +
   theme(legend.position = "none")
+```
+
+```{r}
+str(output_df)
 ```
 
 ```{r}

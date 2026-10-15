@@ -13,7 +13,7 @@ k_ij <- function(x, x_prime,
   return(
     alpha_ij *
       exp(-0.5 * (tau + theta_ij)^2 * Sigma_ij) *
-      cos(2*pi*( (tau + theta_ij) * mu_ij + phi_ij )) # NB: 2*pi factor
+      cos( (tau + theta_ij) * mu_ij + phi_ij )
   )
 }
 
@@ -28,7 +28,8 @@ k_ii <- function(x, x_prime,
   return(
     alpha_ii *
       exp(-0.5*tau^2 * Sigma_i) *
-      cos(2*pi*tau*mu_i) # NB: 2*pi factor
+      cos(tau*mu_i)
+      #cos(2*pi * tau*mu_i) # NB: 2*pi factor
   )
 }
 
@@ -50,10 +51,11 @@ K_ij <- function(xs, xs_prime,
         Kij[r,c] <- k_ii(xs[r], xs_prime[c], ws[i], Sigmas[i], mus[i])
       }
       else {
-        #w_ij <- ws[i]*ws[j] * exp( -1.0/4*(mus[i]-mus[j]) * (Sigmas[i]+Sigmas[j])^-1 * (mus[i]-mus[j]) )
-        w_ij <- ws[i]*ws[j] * exp( -pi^2*(mus[i]-mus[j]) * (Sigmas[i]+Sigmas[j])^-1 * (mus[i]-mus[j]) )
+        w_ij <- ws[i]*ws[j] * exp( -1.0/4*(mus[i]-mus[j]) * (Sigmas[i]+Sigmas[j])^-1 * (mus[i]-mus[j]) )
+        #w_ij <- ws[i]*ws[j] * exp( -pi^2*(mus[i]-mus[j]) * (Sigmas[i]+Sigmas[j])^-1 * (mus[i]-mus[j]) )
         Sigma_ij <- 2*Sigmas[i] * (Sigmas[i] + Sigmas[j])^-1 * Sigmas[j]
         mu_ij <- (Sigmas[i] + Sigmas[j])^-1 * (Sigmas[i]*mus[j] + Sigmas[j]*mus[i])
+        #mu_ij <- (Sigmas[i] + Sigmas[j])^-1 * 2*pi * (Sigmas[i]*mus[j] + Sigmas[j]*mus[i])
         theta_ij <- thetas[i] - thetas[j]
         phi_ij <- phis[i] - phis[j]
 
@@ -135,6 +137,61 @@ K_mat <- function(xs, xs_star, ds, ds_star, D,
   return(Kmat)
 }
 
+# Simulate a single draw from an MOSK GP (D = 2, Q = 1, phi_ij = 0)
+simulate_D2Q1phi0_moskgp <- function(tstart = 0,
+                                     tend = 1,
+                                     n_per_band = 100,
+                                     noise_sigma = 0.1,
+                                     masked_pct = 0.3,
+                                     seed) {
+
+  D <- 2
+  xs <- rep( seq(from = tstart, to = tend, length.out = n_per_band), times = D)
+  ds <- rep(1:D, each = n_per_band)
+  ns <- rep(n_per_band, D)
+  N <- length(xs)
+
+  set.seed(seed)
+
+  #ws <- round( rgamma(D, shape = 2, rate = 2), 3 ) # Gamma(alpha, beta)
+  ws <- round( abs( rnorm(D, mean = 1.0, sd = 2.0) ), 3 )
+
+  Sigmas <- round( abs( rnorm(D, mean = 1.0, sd = 2.0) ), 3 )
+
+  #mu1 <- round( abs( rnorm(1, mean = 0, sd = 10.0) ), 3 )
+  #mus <- c(mu1, mu1)
+  mus <- round( abs( rnorm(D, mean = 5.0, sd = 2.0) ), 3 )
+
+  theta2 <- round( abs( runif(1, min = 0.001, max = 10.0) ), 3 )
+  thetas <- c(0, theta2)
+
+  KK <- Kxx_mat(xs, ns, D, ws, Sigmas, mus, thetas, c(0,0))
+
+  set.seed(seed)
+  output_df <- data.frame(
+    t = xs,
+    f = c(rmvnorm(1, sigma = KK)),
+    y = rep(NA, N),
+    y_se = rep(noise_sigma, N),
+    d = factor(ds),
+    masked = create_block_missing_mask(N, masked_pct, seed)
+  ) |>
+    mutate(y = f + rnorm(length(xs), mean = 0, sd = noise_sigma))
+
+  params_df = data.frame(
+    seed = seed,
+    w = ws,
+    Sigma = Sigmas,
+    mu = mus,
+    theta = thetas
+  )
+
+  return(list(params_df, output_df))
+}
+
+
+
+
 # Simulate a single draw from an MOSK GP (Q = 1)
 simulate_Q1_moskgp <- function(D,
                                n_per_band = 100,
@@ -150,15 +207,15 @@ simulate_Q1_moskgp <- function(D,
 
   set.seed(seed)
 
-  ws <-     round( abs( rnorm(D, mean = 0, sd = 1.0) ), 2 )
-  Sigmas <- round( abs( rnorm(D, mean = 0, sd = 1.0) ), 2 )
-  mus <-    round( abs( rnorm(D, mean = 5, sd = 1.0) ), 2 )
-  thetas <- sort( round( rnorm(D, mean = 0, sd = 1.0), 2 ) ) # ordered
+  ws <-     round( abs( rnorm(D, mean = 1.0, sd = 1.0) ), 2 )
+  Sigmas <- round( abs( rnorm(D, mean = 1.0, sd = 1.0) ), 2 )
+  mus <-    round( abs( rnorm(D, mean = 5.0, sd = 1.0) ), 2 )
+  thetas <- sort( round( abs( rnorm(D, mean = 0.0, sd = 1.0) ), 2 ) ) # ordered
 
   if (zero_phi) {
     phis <- rep(0.0, D)
   } else {
-    phis <- sort(  round( rnorm(D, mean = 0, sd = 1.0), 2 )  ) # ordered
+    phis <- sort(  round( rnorm(D, mean = 0.0, sd = 1.0), 2 )  ) # ordered
   }
 
   KK <- Kxx_mat(xs, ns, D, ws, Sigmas, mus, thetas, phis)
