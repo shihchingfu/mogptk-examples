@@ -50,6 +50,7 @@ estimate_mode <- function(x) {
 ```{r}
 input_df <- read_csv(
   here("data", glue("{filename_stub}-sim.csv")), 
+  col_types = "dddf",
   show_col_types = FALSE)
 
 input_params <- read_tsv(
@@ -91,17 +92,22 @@ data_list <- list(
 )
 ```
 
+
+### Priors
+
+$$w \sim \mathrm{U}[0, 10], \quad \mu \sim \mathrm{U}[0, 5], \quad \Sigma \sim \mathrm{U}[0, 5], \quad \theta_2 \sim \mathrm{U}[0, 1], \quad \phi_2 \sim \mathrm{U}[-\pi, \pi]$$
+
 ```{r}
 format(start_time <- Sys.time())
 
 if (EXECUTE_SAMPLING) {
   init_fun <- function() {
     init =   list(
-      w = c(1.1, 1.6),
-      mu = c(1.9, 2.3),
-      Sigma = c(0.9, 1.1),
-      theta2 = 0.1,
-      phi2 = 0
+      #w = c(1, 1),
+      mu = c(2.0, 2.1)
+      #Sigma = c(0.9, 1.1),
+      #theta2 = 0.5,
+      #phi2 = 0
     )
   }
 
@@ -146,6 +152,8 @@ valid_chains <- c(1:4)
 output_draws <- output$draws(variables = vars, format = "df") |> 
   subset_draws(chain = valid_chains)
 output_draws_mat <- as.matrix(output_draws)
+
+summary(output_draws)
 ```
 
 ## Posterior Predictive Check
@@ -167,8 +175,9 @@ this_post <- output_draws_mat[r,]
 pp_draw <- pred_D2_Q1_draw(this_post, t1 = band1_df$t, t2 = band2_df$t, y1 = band1_df$y, y2 = band2_df$y, y1_se = band1_df$y_se, y2_se = band2_df$y_se, ts1 = ts1, ts2 = ts2)
 
 ggplot() +
-  geom_line(data = pp_draw, aes(x = ts, y = fs, colour = factor(d))) +
-  geom_point(data = input_df, aes(x = t, y = y), size = 0.5)
+  geom_line(data = pp_draw, aes(x = ts, y = fs, colour = d)) +
+  geom_point(data = input_df, aes(x = t, y = y), size = 0.5) +
+  labs(colour = "Band")
 ```
 
 ```{r}
@@ -184,8 +193,9 @@ pp_draws <- pred_D2_Q1(draws = output_draws_mat,
                        n_draws = 100)
 
 ggplot() +
-  geom_line(data = pp_draws, aes(x = ts, y = fs, group = interaction(d,.draw), colour = factor(d))) +
-  geom_point(data = input_df, aes(x = t, y = y), size = 1) 
+  geom_line(data = pp_draws, aes(x = ts, y = fs, group = interaction(d,.draw), colour = d)) +
+  geom_point(data = input_df, aes(x = t, y = y), size = 1) +
+  labs(colour = "Band")
 ```
 
 ## Hyperparameter Posteriors

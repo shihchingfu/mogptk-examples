@@ -191,7 +191,7 @@ pred_D2_Q1_draw <- function(
   data.frame(
     ts = c(ts1, ts2),
     fs = f,
-    d = rep(c(1, 2), times = c(S1, S2))
+    d = factor(rep(c(1, 2), times = c(S1, S2)))
   )
 }
 
