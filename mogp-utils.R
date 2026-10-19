@@ -2,245 +2,270 @@ library(mvtnorm)
 library(tictoc)
 library(stringr)
 
-# Returns the cross-covariance between scalar location x in band i and
-# scalar location x_prime in band j, conditioned on hyperparameter values.
-k_ij <- function(x, x_prime,
-                 w_ij, Sigma_ij, mu_ij, theta_ij, phi_ij) {
+# Cross-band covariance
+#
+# Within-band i parameters
+#   w_i: weight
+#   mu_i: spectral mean (frequency) [radians per unit time, i.e., period = 2*pi/mu]
+#   Sigma_i: spectral variance
+#   theta_i: delay
+#   phi_i: phase
+#
+# Cross-band quantities (i, j):
+#   theta_ij = theta_i - theta_j [offset]
+#   phi_ij   = phi_i - phi_j [phase offset, between -/+ pi]
+#   mu_ij    = (Sigma_j mu_i + Sigma_i mu_j) / (Sigma_i + Sigma_j) [mean frequency of cross-covariance]
+#   Sigma_ij = 2 Sigma_i Sigma_j / (Sigma_i + Sigma_j) [envelope width  ]
+#   w_ij     = w_i w_j exp(-(mu_i - mu_j)^2 / (4 (Sigma_i + Sigma_j)))
+#   alpha_ij = w_ij (2 pi)^(1/2) Sigma_ij^(1/2) [amplitude]
+#
+# Kernel (tau = t - t'):
+#   k_ij(tau) = alpha_ij exp(-1/2 Sigma_ij (tau + theta_ij)^2) cos(mu_ij (tau + theta_ij) + phi_ij)
+k_ij <- function(tau, i, j, w, mu, Sigma, theta, phi) {
+  theta_ij <- theta[i] - theta[j]
+  phi_ij <- phi[i] - phi[j]
+  mu_ij <- (Sigma[j] * mu[i] + Sigma[i] * mu[j]) / (Sigma[i] + Sigma[j])
+  Sigma_ij <- 2 * Sigma[i] * Sigma[j] / (Sigma[i] + Sigma[j])
+  w_ij <- w[i] * w[j] * exp(-(mu[i] - mu[j])^2 / (4 * (Sigma[i] + Sigma[j])))
+  alpha_ij <- w_ij * sqrt(2 * pi * Sigma_ij)
+  alpha_ij *
+    exp(-0.5 * Sigma_ij * (tau + theta_ij)^2) *
+    cos(mu_ij * (tau + theta_ij) + phi_ij)
+}
 
-  tau <- abs(x - x_prime)
-  alpha_ij <- w_ij * sqrt( 2.0*pi * abs(Sigma_ij) )
+# Submatrix where k_ij(ta[n] - tb[m]) = cov(f_i(ta[n]), f_j(tb[m]))
+Kmat_ij <- function(ta, tb, i, j, w, mu, Sigma, theta, phi) {
+  k_ij(outer(ta, tb, "-"), i, j, w, mu, Sigma, theta, phi)
+}
 
-  return(
-    alpha_ij *
-      exp(-0.5 * (tau + theta_ij)^2 * Sigma_ij) *
-      cos( (tau + theta_ij) * mu_ij + phi_ij )
+# Two-band, single component MOSK GP, covariance matrix with heterotopic inputs
+K_D2_Q1 <- function(t1, t2, w, mu, Sigma, theta, phi) {
+  N1 <- length(t1)
+  N2 <- length(t2)
+
+  K11 <- Kmat_ij(t1, t1, 1, 1, w, mu, Sigma, theta, phi) # N1 x N1
+  K22 <- Kmat_ij(t2, t2, 2, 2, w, mu, Sigma, theta, phi) # N2 x N2
+  K12 <- Kmat_ij(t1, t2, 1, 2, w, mu, Sigma, theta, phi) # N1 x N2
+
+  K <- rbind(
+    cbind(K11, K12),
+    cbind(t(K12), K22)
   )
+  K <- (K + t(K)) / 2
 }
 
-# Returns the autocovariance between scalar location x and scalar location
-# x_prime within band i.
-k_ii <- function(x, x_prime,
-                 w_i, Sigma_i, mu_i) {
+# Simulate a single draw from an MOSK GP (D = 2, Q = 1)
+sim_D2_Q1 <- function(
+  tstart = 0,
+  tend = 10,
+  n_per_band = 100,
+  masked_pct = 0,
+  w = NULL,
+  mu = NULL,
+  Sigma = NULL,
+  theta = NULL,
+  phi = NULL,
+  noise = c(0, 0), # observation noise std
+  seed = round(runif(1, min = 0, max = 9999))
+) {
+  if (is.null(w)) {
+    w <- round(sqrt(runif(2, min = 0, max = 5)), 2)
+  } # amplitude (acf scale is w_i^2)
 
-  tau <- abs(x - x_prime)
-  alpha_ii <- w_i^2.0 * sqrt( 2.0*pi * abs(Sigma_i) )
-
-  return(
-    alpha_ii *
-      exp(-0.5*tau^2 * Sigma_i) *
-      cos(tau*mu_i)
-      #cos(2*pi * tau*mu_i) # NB: 2*pi factor
-  )
-}
-
-# Returns a [n x n_prime] matrix containing the covariance between the elements
-# of the vector of locations x in band i with the elements of the vector of
-# locations x_prime in band j.
-K_ij <- function(xs, xs_prime,
-                 i, j,
-                 ws, Sigmas, mus, thetas, phis) {
-
-  n <- length(xs)
-  n_prime <- length(xs_prime)
-
-  Kij <- matrix(NA, nrow = n, ncol = n_prime)
-
-  for (r in 1:n) {
-    for (c in 1:n_prime) {
-      if (i == j) {
-        Kij[r,c] <- k_ii(xs[r], xs_prime[c], ws[i], Sigmas[i], mus[i])
-      }
-      else {
-        w_ij <- ws[i]*ws[j] * exp( -1.0/4*(mus[i]-mus[j]) * (Sigmas[i]+Sigmas[j])^-1 * (mus[i]-mus[j]) )
-        #w_ij <- ws[i]*ws[j] * exp( -pi^2*(mus[i]-mus[j]) * (Sigmas[i]+Sigmas[j])^-1 * (mus[i]-mus[j]) )
-        Sigma_ij <- 2*Sigmas[i] * (Sigmas[i] + Sigmas[j])^-1 * Sigmas[j]
-        mu_ij <- (Sigmas[i] + Sigmas[j])^-1 * (Sigmas[i]*mus[j] + Sigmas[j]*mus[i])
-        #mu_ij <- (Sigmas[i] + Sigmas[j])^-1 * 2*pi * (Sigmas[i]*mus[j] + Sigmas[j]*mus[i])
-        theta_ij <- thetas[i] - thetas[j]
-        phi_ij <- phis[i] - phis[j]
-
-        Kij[r,c] = k_ij(xs[r], xs_prime[c], w_ij, Sigma_ij, mu_ij, theta_ij, phi_ij)
-      }
-    }
-  }
-  return(Kij)
-}
-
-# Returns a square cross-covariance matrix of elements of the vector of
-# locations x with itself in the same band. 'ns' is the number of observations
-# within each band.
-Kxx_mat <- function(xs, ns, D,
-                    ws, Sigmas, mus, thetas, phis) {
-
-  end_idx <- cumsum(ns)
-  start_idx <- 1 + end_idx - ns
-
-  N <- length(xs)
-
-  Kxxmat <- matrix(NA, nrow = N, ncol = N)
-
-  for (r in 1:D) {
-    for (c in 1:D) {
-
-      nrows <- ns[r]
-      rcols <- ns[c]
-
-      start_row <- start_idx[r];
-      end_row <- end_idx[r];
-      start_col <- start_idx[c];
-      end_col <- end_idx[c];
-
-      K_ij_mat <- K_ij(xs[start_row:end_row],
-                       xs[start_col:end_col],
-                       r, c,
-                       ws, Sigmas, mus, thetas, phis)
-
-      Kxxmat[start_row:end_row, start_col:end_col] <- K_ij_mat
-    }
+  if (is.null(mu)) {
+    mu1 <- round((runif(1, min = 0, max = 10)), 2) # period = 2*pi/mu
+    mu2 <- round(rnorm(1, mu1, sd = 1), 2)
+    mu <- c(mu1, mu2)
   }
 
-  for (ii in 1:N) {
-    for (jj in 1:N) {
-      Kxxmat[jj,ii] <- Kxxmat[ii,jj] # enforce symmetry
-    }
+  if (is.null(Sigma)) {
+    Sigma <- round(runif(2, min = 0, max = 5), 2)^2
+  } # spectral variance
+
+  if (is.null(theta)) {
+    theta <- c(0.0, round(runif(1, min = 0, max = 5), 2))
   }
 
-  return(Kxxmat)
-}
-
-# Returns a [n x n_star] cross-covariance matrix between the D bands comprising
-# a D x D arrangement of covariance matrices of elements of the vector of
-# locations xs in band i with the elements of the vector of locations xs_star
-# in band j.
-K_mat <- function(xs, xs_star, ds, ds_star, D,
-                  ws, Sigmas, mus, thetas, phis) {
-
-  N_rows <- length(xs)
-  N_cols <- length(xs_star)
-  Kmat <- matrix(NA, nrow = N_rows, ncol = N_cols)
-
-  for (i in 1:D) { # for each combination of bands
-    for (j in 1:D) {
-
-      i_indices <- which(ds == i)
-      j_indices <- which(ds_star == j)
-
-      x_i <- xs[i_indices]
-      x_j <- xs_star[j_indices]
-
-      Kij_mat <- K_ij(x_i, x_j, i, j, ws, Sigmas, mus, thetas, phis)
-
-      Kmat[i_indices, j_indices] <- Kij_mat
-    }
+  if (is.null(phi)) {
+    phi <- c(0.0, round(runif(1, min = -pi, max = pi), 2))
   }
 
-  return(Kmat)
-}
+  # Covariance matrix of the stacked vector [y1(t); y2(t)]
+  t1 <- seq(tstart, tend, length.out = n_per_band)
+  t2 <- seq(tstart, tend, length.out = n_per_band)
+  N1 <- length(t1)
+  N2 <- length(t2)
 
-# Simulate a single draw from an MOSK GP (D = 2, Q = 1, phi_ij = 0)
-simulate_D2Q1phi0_moskgp <- function(tstart = 0,
-                                     tend = 1,
-                                     n_per_band = 100,
-                                     noise_sigma = 0.1,
-                                     masked_pct = 0.3,
-                                     seed) {
+  K <- K_D2_Q1(t1, t2, w, mu, Sigma, theta, phi) +
+    diag(c(rep(noise[1]^2, N1), rep(noise[2]^2, N2))) +
+    diag(1e-6, N1 + N2) # jitter
 
-  D <- 2
-  xs <- rep( seq(from = tstart, to = tend, length.out = n_per_band), times = D)
-  ds <- rep(1:D, each = n_per_band)
-  ns <- rep(n_per_band, D)
-  N <- length(xs)
-
+  # Sample
   set.seed(seed)
+  y <- t(chol(K)) %*% rnorm(N1 + N2)
 
-  #ws <- round( rgamma(D, shape = 2, rate = 2), 3 ) # Gamma(alpha, beta)
-  ws <- round( abs( rnorm(D, mean = 1.0, sd = 2.0) ), 3 )
-
-  Sigmas <- round( abs( rnorm(D, mean = 1.0, sd = 2.0) ), 3 )
-
-  #mu1 <- round( abs( rnorm(1, mean = 0, sd = 10.0) ), 3 )
-  #mus <- c(mu1, mu1)
-  mus <- round( abs( rnorm(D, mean = 5.0, sd = 2.0) ), 3 )
-
-  theta2 <- round( abs( runif(1, min = 0.001, max = 10.0) ), 3 )
-  thetas <- c(0, theta2)
-
-  KK <- Kxx_mat(xs, ns, D, ws, Sigmas, mus, thetas, c(0,0))
-
-  set.seed(seed)
   output_df <- data.frame(
-    t = xs,
-    f = c(rmvnorm(1, sigma = KK)),
-    y = rep(NA, N),
-    y_se = rep(noise_sigma, N),
-    d = factor(ds),
-    masked = create_block_missing_mask(N, masked_pct, seed)
-  ) |>
-    mutate(y = f + rnorm(length(xs), mean = 0, sd = noise_sigma))
+    t = c(t1, t2),
+    y = y,
+    y_se = rep(noise, times = c(N1, N2)),
+    d = factor(rep(c(1, 2), times = c(N1, N2))),
+    masked = create_block_missing_mask(N1 + N2, masked_pct, seed)
+  )
 
   params_df = data.frame(
     seed = seed,
-    w = ws,
-    Sigma = Sigmas,
-    mu = mus,
-    theta = thetas
+    w = w,
+    mu = mu,
+    Sigma = Sigma,
+    theta = theta,
+    phi = phi
   )
 
   return(list(params_df, output_df))
 }
 
+# Draw single posterior predictive sample
+pred_D2_Q1_draw <- function(
+  posterior_draw, # 1-row matrix
+  t1,
+  t2,
+  y1,
+  y2,
+  y1_se,
+  y2_se,
+  ts1,
+  ts2,
+  jitter = 1e-6
+) {
+  N1 <- length(t1)
+  N2 <- length(t2)
+  S1 <- length(ts1)
+  S2 <- length(ts2)
 
+  w <- posterior_draw[c("w[1]", "w[2]")]
+  mu <- posterior_draw[c("mu[1]", "mu[2]")]
+  Sigma <- posterior_draw[c("Sigma[1]", "Sigma[2]")]
+  theta <- posterior_draw[c("theta[1]", "theta[2]")]
+  phi <- posterior_draw[c("phi[1]", "phi[2]")]
 
+  # Training covariance of [y1; y2], including observation noise
+  Kxx12 <- Kmat_ij(t1, t2, 1, 2, w, mu, Sigma, theta, phi)
+  Kxx11 <- Kmat_ij(t1, t1, 1, 1, w, mu, Sigma, theta, phi)
+  Kxx22 <- Kmat_ij(t2, t2, 2, 2, w, mu, Sigma, theta, phi)
 
-# Simulate a single draw from an MOSK GP (Q = 1)
-simulate_Q1_moskgp <- function(D,
-                               n_per_band = 100,
-                               noise_sigma = 0.25,
-                               masked_pct = 0.2,
-                               zero_phi = FALSE,
-                               seed) {
+  Kxx <- rbind(
+    cbind(Kxx11, Kxx12),
+    cbind(t(Kxx12), Kxx22)
+  )
+  Kxx <- (Kxx + t(Kxx)) / 2 + diag(c(y1_se, y2_se) + jitter)
 
-  xs <- rep( seq(from = 0, to = 1, length.out = n_per_band), times = D)
-  ds <- rep(1:D, each = n_per_band)
-  ns <- rep(n_per_band, D)
-  N <- length(xs)
+  # Test-train cross-covariance: rows [f1*; f2*], columns [y1; y2]
+  Kstar11 <- Kmat_ij(ts1, t1, 1, 1, w, mu, Sigma, theta, phi)
+  Kstar12 <- Kmat_ij(ts1, t2, 1, 2, w, mu, Sigma, theta, phi)
+  Kstar21 <- Kmat_ij(ts2, t1, 2, 1, w, mu, Sigma, theta, phi)
+  Kstar22 <- Kmat_ij(ts2, t2, 2, 2, w, mu, Sigma, theta, phi)
+  Kstar <- rbind(
+    cbind(Kstar11, Kstar12),
+    cbind(Kstar21, Kstar22)
+  )
 
-  set.seed(seed)
+  # Test prior covariance of [f1*; f2*] (noise-free)
+  Kstarstar11 <- Kmat_ij(ts1, ts1, 1, 1, w, mu, Sigma, theta, phi)
+  Kstarstar12 <- Kmat_ij(ts1, ts2, 1, 2, w, mu, Sigma, theta, phi)
+  Kstarstar22 <- Kmat_ij(ts2, ts2, 2, 2, w, mu, Sigma, theta, phi)
+  Kstarstar <- rbind(
+    cbind(Kstarstar11, Kstarstar12),
+    cbind(t(Kstarstar12), Kstarstar22)
+  )
 
-  ws <-     round( abs( rnorm(D, mean = 1.0, sd = 1.0) ), 2 )
-  Sigmas <- round( abs( rnorm(D, mean = 1.0, sd = 1.0) ), 2 )
-  mus <-    round( abs( rnorm(D, mean = 5.0, sd = 1.0) ), 2 )
-  thetas <- sort( round( abs( rnorm(D, mean = 0.0, sd = 1.0) ), 2 ) ) # ordered
+  # Conditional mean and covariance via Cholesky solves
+  L <- t(chol(Kxx))
+  A <- forwardsolve(L, t(Kstar)) # (N1+N2) x (S1+S2)
+  v <- forwardsolve(L, c(y1, y2))
+  m <- as.vector(crossprod(A, v)) # conditional mean
+  C <- Kstarstar - crossprod(A) # conditional covariance
+  C <- (C + t(C)) / 2
 
-  if (zero_phi) {
-    phis <- rep(0.0, D)
+  f <- rmvn(m, C) # joint draw of [f1*; f2*]
+
+  data.frame(
+    ts = c(ts1, ts2),
+    fs = f,
+    d = rep(c(1, 2), times = c(S1, S2))
+  )
+}
+
+# Draw multiple posterior predictive samples
+pred_D2_Q1 <- function(
+  draws, # matrix
+  t1,
+  t2,
+  y1,
+  y2,
+  y1_se,
+  y2_se,
+  ts1,
+  ts2 = ts1,
+  n_draws = 200,
+  seed = NULL
+) {
+  if (!is.null(seed)) {
+    set.seed(seed)
+  }
+
+  #draws <- as.data.frame(draws)
+  idx <- if (n_draws >= nrow(draws)) {
+    seq_len(nrow(draws))
   } else {
-    phis <- sort(  round( rnorm(D, mean = 0.0, sd = 1.0), 2 )  ) # ordered
+    sort(sample(nrow(draws), n_draws))
   }
 
-  KK <- Kxx_mat(xs, ns, D, ws, Sigmas, mus, thetas, phis)
+  S1 <- length(ts1)
+  S2 <- length(ts2)
+  D <- length(idx)
 
-  set.seed(seed)
-  output_df <- data.frame(
-    t = xs,
-    f = c(rmvnorm(1, sigma = KK)),
-    y = rep(NA, N),
-    y_se = rep(noise_sigma, N),
-    d = factor(ds),
-    masked = create_block_missing_mask(N, masked_pct, seed)
-  ) |>
-    mutate(y = f + rnorm(length(xs), mean = 0, sd = noise_sigma))
+  out_list <- vector("list", n_draws)
 
-  params_df = data.frame(
-    seed = seed,
-    w = ws,
-    Sigma = Sigmas,
-    mu = mus,
-    theta = thetas,
-    phi = phis
-  )
+  for (d in seq_along(idx)) {
+    r <- draws[idx[d], ]
 
-  return(list(params_df, output_df))
+    pr <- pred_D2_Q1_draw(
+      r,
+      t1,
+      t2,
+      y1,
+      y2,
+      y1_se,
+      y2_se,
+      ts1,
+      ts2
+    ) |>
+      mutate(.draw = d)
+
+    out_list[[d]] <- pr
+  }
+  out_df <- bind_rows(out_list, .id = ".draw")
+
+  return(out_df)
+}
+
+# Sample from multi-variate normal where C might be numerically singular with small
+# negative eigenvalues
+rmvn <- function(mu, covmat) {
+  for (jitter in 1e-6 * 10^(0:3)) {
+    L <- tryCatch(
+      {
+        chol(covmat + diag(jitter, nrow(covmat))) # add jitter to diagonal to make stable
+      },
+      error = function(e) NULL
+    )
+    if (!is.null(L)) {
+      return(mu + as.vector(t(L) %*% rnorm(length(mu))))
+    }
+  }
+  e <- eigen(covmat, symmetric = TRUE)
+  # replace negative eigenvalues with zero
+  mu + as.vector(e$vectors %*% (sqrt(pmax(e$values, 0)) * rnorm(length(mu))))
 }
 
 # Returns a logical mask for dropping values in contiguous blocks
@@ -250,8 +275,7 @@ create_block_missing_mask <- function(n, prop_missing = 0.5, seed = NULL) {
   n_missing <- floor(prop_missing * n)
   idx <- 1:n
 
-  for (i in 1:(prop_missing*n)) {
-
+  for (i in 1:(prop_missing * n)) {
     lo_cutpoint <- runif(1, min = 1, max = n_missing)
     up_cutpoint <- mean(c(lo_cutpoint, n))
     offset <- ceiling(up_cutpoint - lo_cutpoint)
@@ -268,303 +292,3 @@ create_block_missing_mask <- function(n, prop_missing = 0.5, seed = NULL) {
 
   return(missing_mask)
 }
-
-
-# Generate a single variate from a MOSK GP conditioned on hyperparameter values
-postpred_Q1_draw <- function(
-    xs, ys, ys_se, ds, ns, # no. observations by band
-    xs_star, ds_star, ns_star,
-    D,
-    w, Sigma, mu, theta, phi,
-    seed = NULL,
-    epsilon = 1e-9) {
-
-  N <- length(xs);
-  N_star <- length(xs_star);
-
-  # N x N covariance KS = K(X,X) + Sigma_noise
-  K_xx <- Kxx_mat(xs, ns, D, w, Sigma, mu, theta, phi)
-  diag(K_xx) <- diag(K_xx) + ys_se^2
-
-  # N x N* covariance K* = K(X,X*)
-  K_star = K_mat(xs, xs_star, ds, ds_star, D, w, Sigma, mu, theta, phi)
-
-  # N* x N* covariance K** = K(X*,X*)
-  K_starstar <- Kxx_mat(xs_star, ns_star, D, w, Sigma, mu, theta, phi)
-
-  fstar_mu <- t(K_star) %*% solve(K_xx) %*% ys
-  fstar_Sigma <- K_starstar - t(K_star) %*% solve(K_xx) %*% K_star
-
-
-  fsN <- nrow(fstar_Sigma)
-
-  for (ii in 1:fsN) {
-    for (jj in ii:fsN) {
-      fstar_Sigma[jj,ii] <- fstar_Sigma[ii,jj] # enforce symmetry
-    }
-  }
-
-
-  diag(fstar_Sigma) <- diag(fstar_Sigma) + epsilon
-
-  set.seed(seed)
-  f_star <- rmvnorm(
-    n = 1,
-    mean = fstar_mu,
-    sigma = fstar_Sigma)
-
-  result_df <- data.frame(
-    d_star = factor(ds_star),
-    x_star = xs_star,
-    f_star = t(f_star)
-  )
-
-  return(result_df)
-}
-
-# Generate a n_draw variates conditioned on hyperparameter values
-postpred_Q1_draws <- function(
-    n_draws = 1,
-    xs, ys, ys_se, ds, ns, # no. observations by band
-    xs_star, ds_star, ns_star,
-    D,
-    w, Sigma, mu, theta, phi,
-    seed = NULL,
-    epsilon = 1e-9) {
-
-  l <- vector("list", n_draws)
-
-  for (i in 1:n_draws) {
-    one_draw_df <- postpred_Q1_draw(
-      xs, ys, ys_se, ds, ns,
-      xs_star, ds_star, ns_star,
-      D,
-      w, Sigma, mu, theta, phi,
-      seed,
-      epsilon)
-
-    l[[i]] <- one_draw_df
-  }
-
-  return( bind_rows(l, .id = ".draw"))
-}
-
-# Check the validity of the covariance matrix built from hyperparameter combinations taken from the posterior.
-batch_check_K_validity <- function(
-    xs, xs_star,
-    ds, ds_star,
-    ns, ns_star,
-    D,
-    ws, Sigmas, mus, thetas, phis = thetas*0) {
-
-  n_draws <- NROW(ws)
-  valid_K <- rep("", n_draws)
-
-  warning_count <- 0
-  error_count <- 0
-  valid_count <- 0
-
-  for (r in 1:n_draws) {
-    if (r == 1) {
-      format(start_time <- Sys.time())
-    }
-
-    this_w <- ws[r,]
-    this_Sigma <- Sigmas[r,]
-    this_mu <- mus[r,]
-    this_theta <- thetas[r,]
-    this_phi <- phis[r,]
-
-    return_string <- tryCatch(
-      warning = function(cnd) {
-        return( paste0("Warning: ", conditionMessage(cnd)) )
-      },
-      error = function(cnd) {
-        return( paste0("Error: ", conditionMessage(cnd)) )
-      },
-      {
-        Kxx <- Kxx_mat(xs, ns, D,
-                       this_w, this_Sigma, this_mu, this_theta, this_phi)
-        rmvnorm(n = 1, mean = rep(0, length(xs)), sigma = Kxx)
-
-        #K_star = K_mat(xs, xs_star, ds, ds_star, D,
-        #               this_w, this_Sigma, this_mu, this_theta, this_phi)
-        #chol(K_star)
-
-        K_starstar <- Kxx_mat(xs_star, ns_star, D,
-                              this_w, this_Sigma, this_mu, this_theta, this_phi)
-        rmvnorm(n = 1, mean = rep(0, length(xs_star)), sigma = K_starstar)
-
-        valid_K[r] <- "Valid"
-      }
-    )
-
-    if (str_starts(return_string, "Warn")) {
-      warning_count <- warning_count + 1
-      valid_K[r] <- return_string
-    } else if (str_starts(return_string, "Err")) {
-      error_count <- error_count + 1
-      valid_K[r] <- return_string
-    } else if (return_string == "Valid") {
-      valid_count <- valid_count + 1
-    }
-
-    if ( (r %% round(n_draws/20)) == 0 | r == 1 ) {
-      cat(
-        paste0(
-          r,"/", n_draws,
-          ":\tWarnings = ", warning_count,
-          ",\tErrors = ", error_count,
-          ",\tValid = ", valid_count,
-          " (",format(valid_count/r*100, digits = 3), "%)",
-          "\t[", format( difftime(Sys.time(), start_time), digits = 3 ), "]",
-          "\n")
-      )
-    }
-
-  }
-
-  cat(
-    paste0(
-      "Total draws: ", n_draws,
-      "\nTotal warnings: ", warning_count,
-      "\nTotal errors: ", error_count,
-      "\nTotal valid: ", valid_count, "\n")
-  )
-
-  return( valid_K )
-}
-
-# Generate draws from validated combinations of hyperparameters
-postpred_from_valid_draws <- function(
-    xs, ys, ys_se, ds, ns,
-    xs_star, ds_star, ns_star,
-    D,
-    ws, Sigmas, mus, thetas, phis = 0*thetas,
-    seed = NULL,
-    epsilon = 1e-9) {
-
-  n_draws <- NROW(ws)
-  pp_list <- vector("list", n_draws)
-
-  for (r in 1:n_draws) {
-    if (r == 1) {
-      start_time <- Sys.time()
-    }
-
-    this_w <- ws[r,]
-    this_Sigma <- Sigmas[r,]
-    this_mu <- mus[r,]
-    this_theta <- thetas[r,]
-    this_phi <- phis[r,]
-
-    new_draw <- postpred_Q1_draw(
-      xs, ys, ys_se, ds, ns,
-      xs_star, ds_star, ns_star,
-      D,
-      this_w, this_Sigma, this_mu, this_theta, this_phi) |>
-      mutate(.draw = r)
-
-    pp_list[[r]] <- new_draw
-  }
-
-  if ( (r %% round(n_draws/20)) == 0 | r == 1 ) {
-    cat(
-      paste0(
-        r,"/", n_draws,
-        "\t[", format(difftime(Sys.time(), start_time), digits = 3), "]\n")
-    )
-  }
-
-  pp_df <- bind_rows(pp_list, .id = ".draw")
-
-  return(pp_df)
-}
-
-
-# Check which posterior predictive draws generate a proper covariance matrix.
-check_postpred_draws_validity <- function(
-    xs, ys, ys_se, ds, ns,
-    xs_star, ds_star, ns_star,
-    D,
-    ws, Sigmas, mus, thetas, phis,
-    seed = NULL,
-    epsilon = 1e-9) {
-
-  n_draws <- NROW(ws)
-  pp_list <- vector("list", n_draws)
-  valid_pps <- rep(NA, n_draws)
-
-  warning_count <- 0
-  error_count <- 0
-  valid_count <- 0
-
-  for (r in 1:n_draws) {
-    if (r == 1) {
-      format(start_time <- Sys.time())
-    }
-
-    this_w <- ws[r,]
-    this_Sigma <- Sigmas[r,]
-    this_mu <- mus[r,]
-    this_theta <- thetas[r,]
-    this_phi <- phis[r,]
-
-    return_string <- tryCatch(
-      warning = function(cnd) {
-        return("warning")
-      },
-      error = function(cnd) {
-        return("error")
-      },
-      {
-        new_draw <- postpred_Q1_draw(
-          xs, ys, ys_se, ds, ns,
-          xs_star, ds_star, ns_star,
-          D,
-          this_w, this_Sigma, this_mu, this_theta, this_phi) |>
-          mutate(.draw = r)
-
-        pp_list[[r]] <- new_draw
-        valid_pps[r] <- "Valid"
-      }
-    )
-
-    if (return_string == "warning") {
-      warning_count <- warning_count + 1
-      valid_pps[r] <- "Warning"
-    } else if (return_string == "error") {
-      error_count <- error_count + 1
-      valid_pps[r] <- "Error"
-    } else {
-      valid_count <- valid_count + 1
-    }
-
-    if (r %% 100 == 0) {
-      cat(
-        paste0(
-          r,"/", n_draws,
-          ":\tWarnings = ", warning_count,
-          ",\tErrors = ", error_count,
-          ",\tValid = ", valid_count,
-          " (", format(valid_count/r*100, digits = 3), "%)",
-          "\t[", format( difftime(Sys.time(), start_time), digits = 3 ), "]",
-          "\n")
-      )
-    }
-
-  }
-
-  pp_df <- bind_rows(pp_list, .id = ".draw")
-
-  cat(
-    paste0(
-      "Total draws: ", n_draws,
-      "\nTotal valid", valid_count,
-      "\nTotal warnings: ", warning_count,
-      "\nTotal errors: ", error_count, "\n")
-  )
-
-  return( list(pp_df, valid_pps) )
-}
-
