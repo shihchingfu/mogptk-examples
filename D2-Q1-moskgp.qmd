@@ -9,10 +9,10 @@ This notebook contains the workflow for:
 
 - loading groundtruth 2-band (MOGP) time-series, 
 - fitting a MOSK GP model, 
-- checking which posterior draws produce valid covariance matrices, and 
-- visualing the posteriors of the valid draws.
+- drawing posterior predictive samples,
+- visualising the posteriors .
 
-```{r}
+```{r message=FALSE}
 library(here)
 library(dplyr)
 library(tidyr)
@@ -33,7 +33,7 @@ source(here("mogp-utils.R"))
 
 filename_stub <- "D2-Q1-seed2777-n300-mnar0.3-noise0.05"
 
-EXECUTE_SAMPLING <- TRUE
+EXECUTE_SAMPLING <- FALSE
 # SAMPLING_SEED <- ifelse(EXECUTE_SAMPLING, round(runif(n = 1, 0, 999)), 119)
 
 N_CHAINS <- 4
@@ -48,9 +48,6 @@ estimate_mode <- function(x) {
 ```
 
 ```{r}
-D <- 2
-Q <- 1
-
 input_df <- read_csv(
   here("data", glue("{filename_stub}-sim.csv")), 
   show_col_types = FALSE)
@@ -65,8 +62,6 @@ input_df |>
   geom_linerange(aes(ymax = y + y_se, ymin = y - y_se), colour = "black") +
   geom_point() +
   labs(colour = "Band")
-
-ns <- table(input_df$d)
 ```
 
 ```{r}
@@ -153,23 +148,6 @@ output_draws <- output$draws(variables = vars, format = "df") |>
 output_draws_mat <- as.matrix(output_draws)
 ```
 
-```{r}
-posterior_means <- as.data.frame(output_draws) |> 
-  select(matches(vars)) |> 
-  colMeans()
-posterior_means
-```
-
-```{r}
-posterior_modes <- sapply(select(output_draws, matches(vars)), estimate_mode)
-posterior_modes
-```
-
-```{r}
-input_params
-```
-
-
 ## Posterior Predictive Check
 
 ### Target locations
@@ -181,26 +159,19 @@ ts2 <- ts1
 ```
 
 
-```{r eval=FALSE}
+```{r}
 # Draw posterior predictive samples using a particular posterior draw
-r <- 1
-this_w <- output_draws_mat[r, c("w[1]", "w[2]")]
-this_Sigma <- output_draws_mat[r, c("Sigma[1]", "Sigma[2]")]
-this_mu <- output_draws_mat[r, c("mu[1]", "mu[2]")]
-this_theta <- output_draws_mat[r, c("theta[1]", "theta[2]")]
-this_phi <- output_draws_mat[r, c("phi[1]", "phi[2]")]
-
-this_post <- output_draws_mat[1,]
+r <- sample.int(nrow(output_draws_mat), 1)
+this_post <- output_draws_mat[r,]
 
 pp_draw <- pred_D2_Q1_draw(this_post, t1 = band1_df$t, t2 = band2_df$t, y1 = band1_df$y, y2 = band2_df$y, y1_se = band1_df$y_se, y2_se = band2_df$y_se, ts1 = ts1, ts2 = ts2)
 
 ggplot() +
   geom_line(data = pp_draw, aes(x = ts, y = fs, colour = factor(d))) +
-  geom_point(data = input_df, aes(x = t, y = y, colour = factor(d)), size = 1) 
+  geom_point(data = input_df, aes(x = t, y = y), size = 0.5)
 ```
 
-
-```{r eval=FALSE}
+```{r}
 pp_draws <- pred_D2_Q1(draws = output_draws_mat, 
                        t1 = band1_df$t, 
                        t2 = band2_df$t, 
@@ -210,26 +181,29 @@ pp_draws <- pred_D2_Q1(draws = output_draws_mat,
                        y2_se = band2_df$y_se, 
                        ts1 = ts1, 
                        ts2 = ts2, 
-                       n_draws = 1000)
+                       n_draws = 100)
 
 ggplot() +
   geom_line(data = pp_draws, aes(x = ts, y = fs, group = interaction(d,.draw), colour = factor(d))) +
   geom_point(data = input_df, aes(x = t, y = y), size = 1) 
 ```
 
-
 ## Hyperparameter Posteriors
 
 ```{r}
+input_params # ground truth
+```
+
+```{r}
+posterior_means <- as.data.frame(output_draws) |> 
+  select(matches(vars), -.draw) |> 
+  colMeans()
 posterior_means
 ```
 
 ```{r}
+posterior_modes <- sapply(select(as.data.frame(output_draws), matches(vars), -.draw), estimate_mode)
 posterior_modes
-```
-
-```{r}
-input_params
 ```
 
 ```{r}
@@ -239,65 +213,71 @@ posterior_means['theta[2]']
 
 ```{r}
 output_draws |> 
+  as.data.frame() |> 
   select(.draw, starts_with("w[")) |> 
   pivot_longer(2:3) |> 
   drop_na(value) |> 
   ggplot() +
   aes(x = value) +
-  geom_histogram() +
+  geom_histogram(bins = 30) +
   facet_wrap(vars(name), scales = "free_y")
 ```
 
 ```{r}
 output_draws |> 
+  as.data.frame() |> 
   select(.draw, starts_with("Sigma")) |> 
   pivot_longer(2:3) |> 
   drop_na(value) |> 
   ggplot() +
   aes(x = value) +
-  geom_histogram() +
+  geom_histogram(bins = 30) +
   facet_wrap(vars(name), scales = "free_y")
 ```
 
 ```{r}
 output_draws |> 
+  as.data.frame() |> 
   select(.draw, starts_with("mu")) |> 
   pivot_longer(2:3) |> 
   drop_na(value) |> 
   ggplot() +
   aes(x = value) +
-  geom_histogram() +
+  geom_histogram(bins = 30) +
   facet_wrap(vars(name), scales = "free")
 ```
 
 ```{r}
 output_draws |> 
+  as.data.frame() |> 
   select(.draw, starts_with("theta")) |> 
   pivot_longer(2:3) |> 
   drop_na(value) |> 
   ggplot() +
   aes(x = value) +
-  geom_histogram() +
+  geom_histogram(bins = 30) +
   facet_wrap(vars(name), scales = "free_y")
 ```
 
 ```{r}
 output_draws |>
+  as.data.frame() |> 
   select(.draw, starts_with("phi")) |>
   pivot_longer(2:3) |>
   drop_na(value) |>
   ggplot() +
   aes(x = value) +
-  geom_histogram() +
+  geom_histogram(bins = 30) +
   facet_wrap(vars(name), scales = "free_y")
 ```
 
 ```{r}
 output_draws |> 
-  pivot_longer(cols = c(`theta[1]`, `theta[2]`), names_to = "Parameter") |> 
   ggplot() +
-  aes(x = value, fill = Parameter) +
-  geom_histogram(position = "identity", bins = 50, alpha = 0.5)
+  aes(x = `theta[2]`) +
+  geom_histogram(bins = 40) +
+  geom_vline(xintercept = diff(input_params$theta), linetype = "dashed") +
+  geom_vline(xintercept = posterior_means["theta[2]"], colour = "red") 
 ```
 
 
