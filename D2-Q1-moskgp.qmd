@@ -31,14 +31,14 @@ color_scheme_set("viridis") # bayesplot
 
 source(here("mogp-utils.R"))
 
-filename_stub <- "D2-Q1-seed2777-n300-mnar0.3-noise0.05"
+filename_stub <- "D2-Q1-seed2495-n300-mnar0.3-noise0.05"
 
 EXECUTE_SAMPLING <- FALSE
 # SAMPLING_SEED <- ifelse(EXECUTE_SAMPLING, round(runif(n = 1, 0, 999)), 119)
 
 N_CHAINS <- 4
-N_WARMUP <- 500
-N_SAMPLES <- 500
+N_WARMUP <- 1000
+N_SAMPLES <- 1000
 
 # Function estimates the mode of a sample
 estimate_mode <- function(x) {
@@ -113,7 +113,7 @@ if (EXECUTE_SAMPLING) {
 
   output <- stan_model$sample(
     data = data_list,
-    init = init_fun,
+    #init = init_fun,
     chains = N_CHAINS,
     parallel_chains = N_CHAINS,
     iter_warmup = N_WARMUP,
@@ -290,4 +290,4 @@ output_draws |>
   geom_vline(xintercept = posterior_means["theta[2]"], colour = "red") 
 ```
 
-
+if $\Sigma_{ij}$ is small, i.e., narrow peak in spectral domain, then the exponential envelope is broad in the time domain. This makes it difficult to distinguish $\theta$ from $\phi$ since both shift the oscillation. Consider using a more informative prior on $\theta$. 
