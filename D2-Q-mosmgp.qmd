@@ -1,0 +1,292 @@
+---
+title: "Fit MOSM GP to 2-band synthetic example"
+format: 
+  html:
+    embed-resources: true
+---
+
+This notebook contains the workflow for:
+
+- loading groundtruth 2-band (MOGP) time-series, 
+- fitting a MOSK GP model, 
+- drawing posterior predictive samples,
+- visualising the posteriors .
+
+```{r message=FALSE}
+library(here)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(cmdstanr)
+library(posterior)
+library(bayesplot)
+library(readr)
+library(glue)
+
+register_knitr_engine(override = FALSE)
+
+theme_set(theme_bw())
+color_scheme_set("viridis")
+
+source(here("mogp-utils.R"))
+
+filename_stub <- "D2-Q3-seed6016-n300-mnar0.3-noise0.05"
+
+EXECUTE_SAMPLING <- TRUE
+
+N_CHAINS <- 4
+N_WARMUP <- 500
+N_SAMPLES <- 500
+
+# Function estimates the mode of a sample
+estimate_mode <- function(x) {
+  d <- density(x, n = 2^6)
+  d$x[which.max(d$y)]
+}
+```
+
+```{r}
+input_df <- read_csv(
+  here("data", glue("{filename_stub}-sim.csv")), 
+  col_types = "dddf",
+  show_col_types = FALSE)
+
+input_params <- read_tsv(
+  here("data", glue("{filename_stub}-param.tsv")), 
+  show_col_types = FALSE)
+
+input_df |> 
+  ggplot() +
+  aes(x = t, y = y, colour = factor(d)) +
+  geom_linerange(aes(ymax = y + y_se, ymin = y - y_se), colour = "black") +
+  geom_point() +
+  labs(colour = "Band")
+```
+
+```{r}
+input_params
+```
+
+# Model Fitting
+
+```{r}
+stan_model <- cmdstan_model(here("stan", "mosmgp-D2-Q.stan"))
+```
+
+## Sampling
+
+```{r}
+D <- 2
+Q <- 3 
+
+band1_df <- filter(input_df, d == 1)
+band2_df <- filter(input_df, d == 2)
+
+data_list <- list(
+  Q = Q,
+  N1 = length(band1_df$t),
+  N2 = length(band2_df$t),
+  t1 = band1_df$t,
+  t2 = band2_df$t,
+  y1 = band1_df$y,
+  y2 = band2_df$y,
+  y1_se = band1_df$y_se,
+  y2_se = band2_df$y_se
+)
+```
+
+### Priors
+
+$$w \sim \mathcal{N}_+(0, 1), \quad \mu \sim \mathcal{N}(0, 3), \quad \Sigma \sim \mathcal{N}(0, 3), \quad \theta_2 \sim \mathcal{N}(0, 1), \quad \phi_2 \sim \mathrm{U}[-\pi, \pi]$$
+
+```{r}
+format(start_time <- Sys.time())
+
+if (EXECUTE_SAMPLING) {
+  init_fun <- function() {
+    list(
+      mu1 = sort(c(0.79, 2.72, 0.2) + rnorm(Q, 0, 0.1)),
+      mu2 = c(0.93, 2.81, 0.19) + rnorm(Q, 0, 0.1)
+    )
+  }
+
+  output <- stan_model$sample(
+    data = data_list,
+    init = init_fun,
+    chains = N_CHAINS,
+    parallel_chains = N_CHAINS,
+    iter_warmup = N_WARMUP,
+    iter_sampling = N_SAMPLES,
+    refresh = 500,
+    show_exceptions = FALSE,
+    show_messages = TRUE
+  )
+  
+  output$save_object(
+    here("RDS", glue("{filename_stub}_mosmgp-D{D}-Q{Q}.RDS")))
+  
+} else {
+  output <- readRDS(
+    here("RDS", glue("{filename_stub}_mosmgp-D{D}-Q{Q}.RDS")))
+}
+
+format(finish_time <- Sys.time())
+difftime(finish_time, start_time)  
+```
+
+# Results
+
+```{r}
+vars <- c("w", "mu", "Sigma", "theta", "phi")
+output$summary(variables = vars, 
+               posterior::default_convergence_measures())
+```
+
+```{r}
+mcmc_trace(output$draws(vars))
+```
+
+```{r}
+valid_chains <- c(1:4)
+output_draws <- output$draws(variables = vars, format = "df") |> 
+  subset_draws(chain = valid_chains)
+output_draws_mat <- as.matrix(output_draws)
+
+summary(output_draws)
+```
+
+## Posterior Predictive Check
+
+### Target locations
+
+```{r}
+n_star <- 100
+ts1 <- seq(from = 0, to = 10, length.out = n_star)
+ts2 <- ts1
+```
+
+
+```{r}
+# Draw posterior predictive samples using a particular posterior draw
+r <- sample.int(nrow(output_draws_mat), 1)
+this_post <- output_draws_mat[r,]
+
+pp_draw <- pred_D2_Q1_draw(this_post, t1 = band1_df$t, t2 = band2_df$t, y1 = band1_df$y, y2 = band2_df$y, y1_se = band1_df$y_se, y2_se = band2_df$y_se, ts1 = ts1, ts2 = ts2)
+
+ggplot() +
+  geom_line(data = pp_draw, aes(x = ts, y = fs, colour = d)) +
+  geom_point(data = input_df, aes(x = t, y = y), size = 0.5) +
+  labs(colour = "Band")
+```
+
+```{r}
+pp_draws <- pred_D2_Q1(draws = output_draws_mat, 
+                       t1 = band1_df$t, 
+                       t2 = band2_df$t, 
+                       y1 = band1_df$y, 
+                       y2 = band2_df$y, 
+                       y1_se = band1_df$y_se, 
+                       y2_se = band2_df$y_se, 
+                       ts1 = ts1, 
+                       ts2 = ts2, 
+                       n_draws = 100)
+
+ggplot() +
+  geom_line(data = pp_draws, aes(x = ts, y = fs, group = interaction(d,.draw), colour = d)) +
+  geom_point(data = input_df, aes(x = t, y = y), size = 1) +
+  labs(colour = "Band")
+```
+
+## Hyperparameter Posteriors
+
+```{r}
+input_params # ground truth
+```
+
+```{r}
+posterior_means <- as.data.frame(output_draws) |> 
+  select(matches(vars), -.draw) |> 
+  colMeans()
+posterior_means
+```
+
+```{r}
+posterior_modes <- sapply(select(as.data.frame(output_draws), matches(vars), -.draw), estimate_mode)
+posterior_modes
+```
+
+```{r}
+diff(input_params$theta)
+posterior_means['theta[2]']
+```
+
+```{r}
+output_draws |> 
+  as.data.frame() |> 
+  select(.draw, starts_with("w[")) |> 
+  pivot_longer(2:3) |> 
+  drop_na(value) |> 
+  ggplot() +
+  aes(x = value) +
+  geom_histogram(bins = 30) +
+  facet_wrap(vars(name), scales = "free_y")
+```
+
+```{r}
+output_draws |> 
+  as.data.frame() |> 
+  select(.draw, starts_with("Sigma")) |> 
+  pivot_longer(2:3) |> 
+  drop_na(value) |> 
+  ggplot() +
+  aes(x = value) +
+  geom_histogram(bins = 30) +
+  facet_wrap(vars(name), scales = "free_y")
+```
+
+```{r}
+output_draws |> 
+  as.data.frame() |> 
+  select(.draw, starts_with("mu")) |> 
+  pivot_longer(2:3) |> 
+  drop_na(value) |> 
+  ggplot() +
+  aes(x = value) +
+  geom_histogram(bins = 30) +
+  facet_wrap(vars(name), scales = "free")
+```
+
+```{r}
+output_draws |> 
+  as.data.frame() |> 
+  select(.draw, starts_with("theta")) |> 
+  pivot_longer(2:3) |> 
+  drop_na(value) |> 
+  ggplot() +
+  aes(x = value) +
+  geom_histogram(bins = 30) +
+  facet_wrap(vars(name), scales = "free_y")
+```
+
+```{r}
+output_draws |>
+  as.data.frame() |> 
+  select(.draw, starts_with("phi")) |>
+  pivot_longer(2:3) |>
+  drop_na(value) |>
+  ggplot() +
+  aes(x = value) +
+  geom_histogram(bins = 30) +
+  facet_wrap(vars(name), scales = "free_y")
+```
+
+```{r}
+output_draws |> 
+  ggplot() +
+  aes(x = `theta[2]`) +
+  geom_histogram(bins = 40) +
+  geom_vline(xintercept = diff(input_params$theta), linetype = "dashed") +
+  geom_vline(xintercept = posterior_means["theta[2]"], colour = "red") 
+```
+
+
