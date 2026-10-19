@@ -1,8 +1,136 @@
-library(mvtnorm)
-library(tictoc)
-library(stringr)
+# Two-band, Q-component MOSM GP
+#
+# k_ij(tau) = \sum_q alpha_ij^(q) exp(-1/2 Sigma_ij^(q) (tau + theta_ij^(q))^2)
+#                      * cos(mu_ij^(q) (tau + theta_ij^(q)) + phi_ij^(q))
+#
+# Parameters expressed as Q x 2 matrices, each row a component, each column a band.).
+#
+# Per component q and channel pair (i, j):
+#   theta_ij = theta_i - theta_j,   phi_ij = phi_i - phi_j
+#   mu_ij    = (Sigma_j mu_i + Sigma_i mu_j) / (Sigma_i + Sigma_j)
+#   Sigma_ij = 2 Sigma_i Sigma_j / (Sigma_i + Sigma_j)
+#   w_ij     = w_i w_j exp(-(mu_i - mu_j)^2 / (4 (Sigma_i + Sigma_j)))
+#   alpha_ij = w_ij (2 pi)^(1/2) Sigma_ij^(1/2)
+k_ij_D2_Q <- function(tau, i, j, w, mu, Sigma, theta, phi) {
+  Q <- nrow(w)
 
-# Cross-band covariance
+  k <- 0
+  for (q in seq_len(Q)) {
+    theta_ij <- theta[q, i] - theta[q, j]
+    phi_ij <- phi[q, i] - phi[q, j]
+    mu_ij <- (Sigma[q, j] * mu[q, i] + Sigma[q, i] * mu[q, j]) /
+      (Sigma[q, i] + Sigma[q, j])
+    Sigma_ij <- 2 * Sigma[q, i] * Sigma[q, j] / (Sigma[q, i] + Sigma[q, j])
+    w_ij <- w[q, i] *
+      w[q, j] *
+      exp(-(mu[q, i] - mu[q, j])^2 / (4 * (Sigma[q, i] + Sigma[q, j])))
+    alpha_ij <- w_ij * sqrt(2 * pi * Sigma_ij)
+    k <- k +
+      alpha_ij *
+        exp(-0.5 * Sigma_ij * (tau + theta_ij)^2) *
+        cos(mu_ij * (tau + theta_ij) + phi_ij)
+  }
+  k
+}
+
+Kmat_ij_D2_Q <- function(ta, tb, i, j, w, mu, Sigma, theta, phi) {
+  tau <- outer(ta, tb, "-")
+  k_ij_D2_Q(tau, i, j, w, mu, Sigma, theta, phi)
+}
+
+# Two-band, multi-component MOSK GP, covariance matrix with heterotopic inputs
+K_D2_Q <- function(t1, t2, w, mu, Sigma, theta, phi) {
+  K11 <- Kmat_ij_D2_Q(t1, t1, 1, 1, w, mu, Sigma, theta, phi)
+  K22 <- Kmat_ij_D2_Q(t2, t2, 2, 2, w, mu, Sigma, theta, phi)
+  K12 <- Kmat_ij_D2_Q(t1, t2, 1, 2, w, mu, Sigma, theta, phi)
+
+  K <- rbind(
+    cbind(K11, K12),
+    cbind(t(K12), K22)
+  )
+  K <- (K + t(K)) / 2
+}
+
+# Simulate a single draw from an MOSM GP (D = 2, Q)
+sim_D2_Q <- function(
+  tstart = 0,
+  tend = 10,
+  n_per_band = 100,
+  masked_pct = 0,
+  Q = 2,
+  w = NULL,
+  mu = NULL,
+  Sigma = NULL,
+  theta = NULL,
+  phi = NULL,
+  noise = c(0, 0), # observation noise std
+  seed = round(runif(1, min = 0, max = 9999))
+) {
+  if (is.null(w)) {
+    w <- round(
+      sqrt(
+        matrix(runif(2 * Q, min = 0, max = 5), ncol = 2)
+      ),
+      2
+    )
+  }
+
+  if (is.null(mu)) {
+    mu1 <- round((runif(Q, min = 0, max = 10)), 2) # period = 2*pi/mu
+    mu2 <- round(rnorm(Q, mu1, sd = 1), 2)
+    mu <- cbind(mu1, mu2)
+  }
+
+  if (is.null(Sigma)) {
+    Sigma1 <- round(runif(Q, min = 0, max = 5), 2)^2
+    Sigma2 <- round(rnorm(Q, Sigma1, sd = 1), 2)
+    Sigma <- cbind(Sigma1, Sigma2)
+  }
+
+  if (is.null(theta)) {
+    theta <- cbind(0, round(runif(Q, min = 0, max = 5), 2))
+  }
+
+  if (is.null(phi)) {
+    phi <- cbind(0, round(runif(Q, min = -pi, max = pi), 2))
+  }
+
+  # Covariance matrix of the stacked vector [y1(t); y2(t)]
+  t1 <- seq(tstart, tend, length.out = n_per_band)
+  t2 <- seq(tstart, tend, length.out = n_per_band)
+  N1 <- length(t1)
+  N2 <- length(t2)
+
+  K <- K_D2_Q(t1, t2, w, mu, Sigma, theta, phi) +
+    diag(c(rep(noise[1]^2, N1), rep(noise[2]^2, N2))) +
+    diag(1e-6, N1 + N2) # jitter
+
+  # Sample
+  set.seed(seed)
+  y <- t(chol(K)) %*% rnorm(N1 + N2)
+
+  output_df <- data.frame(
+    t = c(t1, t2),
+    y = y,
+    y_se = rep(noise, times = c(N1, N2)),
+    d = factor(rep(c(1, 2), times = c(N1, N2))),
+    masked = create_block_missing_mask(N1 + N2, masked_pct, seed)
+  )
+
+  params_df <- data.frame(
+    seed = seed,
+    w = w,
+    mu = mu,
+    Sigma = Sigma,
+    theta = theta,
+    phi = phi
+  )
+
+  return(list(params_df, output_df))
+}
+
+
+# Two-band, single-component MOSM GP
 #
 # Within-band i parameters
 #   w_i: weight
@@ -21,7 +149,7 @@ library(stringr)
 #
 # Kernel (tau = t - t'):
 #   k_ij(tau) = alpha_ij exp(-1/2 Sigma_ij (tau + theta_ij)^2) cos(mu_ij (tau + theta_ij) + phi_ij)
-k_ij <- function(tau, i, j, w, mu, Sigma, theta, phi) {
+k_ij_D2_Q1 <- function(tau, i, j, w, mu, Sigma, theta, phi) {
   theta_ij <- theta[i] - theta[j]
   phi_ij <- phi[i] - phi[j]
   mu_ij <- (Sigma[j] * mu[i] + Sigma[i] * mu[j]) / (Sigma[i] + Sigma[j])
@@ -34,18 +162,16 @@ k_ij <- function(tau, i, j, w, mu, Sigma, theta, phi) {
 }
 
 # Submatrix where k_ij(ta[n] - tb[m]) = cov(f_i(ta[n]), f_j(tb[m]))
-Kmat_ij <- function(ta, tb, i, j, w, mu, Sigma, theta, phi) {
-  k_ij(outer(ta, tb, "-"), i, j, w, mu, Sigma, theta, phi)
+Kmat_ij_D2_Q1 <- function(ta, tb, i, j, w, mu, Sigma, theta, phi) {
+  tau <- outer(ta, tb, "-")
+  k_ij_D2_Q1(tau, i, j, w, mu, Sigma, theta, phi)
 }
 
 # Two-band, single component MOSK GP, covariance matrix with heterotopic inputs
 K_D2_Q1 <- function(t1, t2, w, mu, Sigma, theta, phi) {
-  N1 <- length(t1)
-  N2 <- length(t2)
-
-  K11 <- Kmat_ij(t1, t1, 1, 1, w, mu, Sigma, theta, phi) # N1 x N1
-  K22 <- Kmat_ij(t2, t2, 2, 2, w, mu, Sigma, theta, phi) # N2 x N2
-  K12 <- Kmat_ij(t1, t2, 1, 2, w, mu, Sigma, theta, phi) # N1 x N2
+  K11 <- Kmat_ij_D2_Q1(t1, t1, 1, 1, w, mu, Sigma, theta, phi)
+  K22 <- Kmat_ij_D2_Q1(t2, t2, 2, 2, w, mu, Sigma, theta, phi)
+  K12 <- Kmat_ij_D2_Q1(t1, t2, 1, 2, w, mu, Sigma, theta, phi)
 
   K <- rbind(
     cbind(K11, K12),
@@ -112,7 +238,7 @@ sim_D2_Q1 <- function(
     masked = create_block_missing_mask(N1 + N2, masked_pct, seed)
   )
 
-  params_df = data.frame(
+  params_df <- data.frame(
     seed = seed,
     w = w,
     mu = mu,
@@ -149,9 +275,9 @@ pred_D2_Q1_draw <- function(
   phi <- posterior_draw[c("phi[1]", "phi[2]")]
 
   # Training covariance of [y1; y2], including observation noise
-  Kxx12 <- Kmat_ij(t1, t2, 1, 2, w, mu, Sigma, theta, phi)
-  Kxx11 <- Kmat_ij(t1, t1, 1, 1, w, mu, Sigma, theta, phi)
-  Kxx22 <- Kmat_ij(t2, t2, 2, 2, w, mu, Sigma, theta, phi)
+  Kxx12 <- Kmat_ij_D2_Q1(t1, t2, 1, 2, w, mu, Sigma, theta, phi)
+  Kxx11 <- Kmat_ij_D2_Q1(t1, t1, 1, 1, w, mu, Sigma, theta, phi)
+  Kxx22 <- Kmat_ij_D2_Q1(t2, t2, 2, 2, w, mu, Sigma, theta, phi)
 
   Kxx <- rbind(
     cbind(Kxx11, Kxx12),
@@ -160,19 +286,19 @@ pred_D2_Q1_draw <- function(
   Kxx <- (Kxx + t(Kxx)) / 2 + diag(c(y1_se, y2_se) + jitter)
 
   # Test-train cross-covariance: rows [f1*; f2*], columns [y1; y2]
-  Kstar11 <- Kmat_ij(ts1, t1, 1, 1, w, mu, Sigma, theta, phi)
-  Kstar12 <- Kmat_ij(ts1, t2, 1, 2, w, mu, Sigma, theta, phi)
-  Kstar21 <- Kmat_ij(ts2, t1, 2, 1, w, mu, Sigma, theta, phi)
-  Kstar22 <- Kmat_ij(ts2, t2, 2, 2, w, mu, Sigma, theta, phi)
+  Kstar11 <- Kmat_ij_D2_Q1(ts1, t1, 1, 1, w, mu, Sigma, theta, phi)
+  Kstar12 <- Kmat_ij_D2_Q1(ts1, t2, 1, 2, w, mu, Sigma, theta, phi)
+  Kstar21 <- Kmat_ij_D2_Q1(ts2, t1, 2, 1, w, mu, Sigma, theta, phi)
+  Kstar22 <- Kmat_ij_D2_Q1(ts2, t2, 2, 2, w, mu, Sigma, theta, phi)
   Kstar <- rbind(
     cbind(Kstar11, Kstar12),
     cbind(Kstar21, Kstar22)
   )
 
   # Test prior covariance of [f1*; f2*] (noise-free)
-  Kstarstar11 <- Kmat_ij(ts1, ts1, 1, 1, w, mu, Sigma, theta, phi)
-  Kstarstar12 <- Kmat_ij(ts1, ts2, 1, 2, w, mu, Sigma, theta, phi)
-  Kstarstar22 <- Kmat_ij(ts2, ts2, 2, 2, w, mu, Sigma, theta, phi)
+  Kstarstar11 <- Kmat_ij_D2_Q1(ts1, ts1, 1, 1, w, mu, Sigma, theta, phi)
+  Kstarstar12 <- Kmat_ij_D2_Q1(ts1, ts2, 1, 2, w, mu, Sigma, theta, phi)
+  Kstarstar22 <- Kmat_ij_D2_Q1(ts2, ts2, 2, 2, w, mu, Sigma, theta, phi)
   Kstarstar <- rbind(
     cbind(Kstarstar11, Kstarstar12),
     cbind(t(Kstarstar12), Kstarstar22)
@@ -213,7 +339,6 @@ pred_D2_Q1 <- function(
     set.seed(seed)
   }
 
-  #draws <- as.data.frame(draws)
   idx <- if (n_draws >= nrow(draws)) {
     seq_len(nrow(draws))
   } else {
@@ -248,6 +373,7 @@ pred_D2_Q1 <- function(
 
   return(out_df)
 }
+
 
 # Sample from multi-variate normal where C might be numerically singular with small
 # negative eigenvalues
