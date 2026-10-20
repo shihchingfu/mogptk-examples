@@ -32,11 +32,11 @@ source(here("mogp-utils.R"))
 
 filename_stub <- "D2-Q3-seed6016-n300-mnar0.3-noise0.05"
 
-EXECUTE_SAMPLING <- TRUE
+EXECUTE_SAMPLING <- FALSE
 
-N_CHAINS <- 4
-N_WARMUP <- 500
-N_SAMPLES <- 500
+N_CHAINS <- 6
+N_WARMUP <- 1000
+N_SAMPLES <- 1000
 
 # Function estimates the mode of a sample
 estimate_mode <- function(x) {
@@ -147,13 +147,22 @@ mcmc_trace(output$draws(vars))
 ```
 
 ```{r}
-valid_chains <- c(1:4)
+valid_chains <- c(1:3)
 output_draws <- output$draws(variables = vars, format = "df") |> 
   subset_draws(chain = valid_chains)
 output_draws_mat <- as.matrix(output_draws)
 
 summary(output_draws)
 ```
+
+```{r}
+mcmc_trace(output_draws, pars = c("Sigma[1,2]", "Sigma[2,2]", "Sigma[3,2]"), facet_args = list(nrow = 3))
+```
+
+```{r}
+mcmc_trace(output_draws, pars = c("theta[1,2]", "theta[2,2]", "theta[3,2]"), facet_args = list(nrow = 3))
+```
+
 
 ## Posterior Predictive Check
 
@@ -166,12 +175,12 @@ ts2 <- ts1
 ```
 
 
-```{r}
+```{r eval=FALSE}
 # Draw posterior predictive samples using a particular posterior draw
 r <- sample.int(nrow(output_draws_mat), 1)
 this_post <- output_draws_mat[r,]
 
-pp_draw <- pred_D2_Q1_draw(this_post, t1 = band1_df$t, t2 = band2_df$t, y1 = band1_df$y, y2 = band2_df$y, y1_se = band1_df$y_se, y2_se = band2_df$y_se, ts1 = ts1, ts2 = ts2)
+pp_draw <- pred_D2_Q_draw(this_post, t1 = band1_df$t, t2 = band2_df$t, y1 = band1_df$y, y2 = band2_df$y, y1_se = band1_df$y_se, y2_se = band2_df$y_se, ts1 = ts1, ts2 = ts2)
 
 ggplot() +
   geom_line(data = pp_draw, aes(x = ts, y = fs, colour = d)) +
@@ -179,8 +188,8 @@ ggplot() +
   labs(colour = "Band")
 ```
 
-```{r}
-pp_draws <- pred_D2_Q1(draws = output_draws_mat, 
+```{r eval=FALSE}
+pp_draws <- pred_D2_Q(draws = output_draws_mat, 
                        t1 = band1_df$t, 
                        t2 = band2_df$t, 
                        y1 = band1_df$y, 
@@ -216,15 +225,10 @@ posterior_modes
 ```
 
 ```{r}
-diff(input_params$theta)
-posterior_means['theta[2]']
-```
-
-```{r}
 output_draws |> 
   as.data.frame() |> 
   select(.draw, starts_with("w[")) |> 
-  pivot_longer(2:3) |> 
+  pivot_longer(2:6) |> 
   drop_na(value) |> 
   ggplot() +
   aes(x = value) +
@@ -236,7 +240,7 @@ output_draws |>
 output_draws |> 
   as.data.frame() |> 
   select(.draw, starts_with("Sigma")) |> 
-  pivot_longer(2:3) |> 
+  pivot_longer(2:6) |> 
   drop_na(value) |> 
   ggplot() +
   aes(x = value) +
@@ -248,7 +252,7 @@ output_draws |>
 output_draws |> 
   as.data.frame() |> 
   select(.draw, starts_with("mu")) |> 
-  pivot_longer(2:3) |> 
+  pivot_longer(2:6) |> 
   drop_na(value) |> 
   ggplot() +
   aes(x = value) +
@@ -260,19 +264,19 @@ output_draws |>
 output_draws |> 
   as.data.frame() |> 
   select(.draw, starts_with("theta")) |> 
-  pivot_longer(2:3) |> 
+  pivot_longer(2:6) |> 
   drop_na(value) |> 
   ggplot() +
   aes(x = value) +
   geom_histogram(bins = 30) +
-  facet_wrap(vars(name), scales = "free_y")
+  facet_wrap(vars(name), scales = "free")
 ```
 
 ```{r}
 output_draws |>
   as.data.frame() |> 
   select(.draw, starts_with("phi")) |>
-  pivot_longer(2:3) |>
+  pivot_longer(2:6) |>
   drop_na(value) |>
   ggplot() +
   aes(x = value) +
@@ -283,7 +287,7 @@ output_draws |>
 ```{r}
 output_draws |> 
   ggplot() +
-  aes(x = `theta[2]`) +
+  aes(x = `theta[1,2]`) +
   geom_histogram(bins = 40) +
   geom_vline(xintercept = diff(input_params$theta), linetype = "dashed") +
   geom_vline(xintercept = posterior_means["theta[2]"], colour = "red") 
