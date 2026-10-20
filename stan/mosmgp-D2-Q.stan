@@ -89,11 +89,11 @@ transformed parameters {
 
 model {
   // Priors (adjust to your data's scale)
-  to_vector(w) ~ normal(0, 1);
+  to_vector(w) ~ normal(0, 3);
   mu1 ~ normal(0, 3);
   mu2 ~ normal(0, 3);
   to_vector(Sigma) ~ normal(0, 3);
-  theta2 ~ normal(0, 1);
+  theta2 ~ normal(0, 3);
   // phi2: uniform on (-pi, pi) implied by bounds
 
   // Per-component kernel parameters for each distinct channel pair

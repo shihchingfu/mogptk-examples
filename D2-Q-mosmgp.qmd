@@ -8,7 +8,7 @@ format:
 This notebook contains the workflow for:
 
 - loading groundtruth 2-band (MOGP) time-series, 
-- fitting a MOSK GP model, 
+- fitting a multicomponent MOSM GP model, 
 - drawing posterior predictive samples,
 - visualising the posteriors .
 
@@ -32,7 +32,7 @@ source(here("mogp-utils.R"))
 
 filename_stub <- "D2-Q3-seed6016-n300-mnar0.3-noise0.05"
 
-EXECUTE_SAMPLING <- FALSE
+EXECUTE_SAMPLING <- TRUE
 
 N_CHAINS <- 6
 N_WARMUP <- 1000
@@ -64,7 +64,7 @@ input_df |>
 ```
 
 ```{r}
-input_params
+print(input_params)
 ```
 
 # Model Fitting
@@ -97,7 +97,7 @@ data_list <- list(
 
 ### Priors
 
-$$w \sim \mathcal{N}_+(0, 1), \quad \mu \sim \mathcal{N}(0, 3), \quad \Sigma \sim \mathcal{N}(0, 3), \quad \theta_2 \sim \mathcal{N}(0, 1), \quad \phi_2 \sim \mathrm{U}[-\pi, \pi]$$
+$$w \sim \mathcal{N}_+(0, 3), \quad \mu \sim \mathcal{N}_+(0, 3), \quad \Sigma \sim \mathcal{N}_+(0, 3), \quad \theta_2 \sim \mathcal{N}(0, 1), \quad \phi_2 \sim \mathrm{U}[-\pi, \pi]$$
 
 ```{r}
 format(start_time <- Sys.time())
@@ -112,7 +112,7 @@ if (EXECUTE_SAMPLING) {
 
   output <- stan_model$sample(
     data = data_list,
-    init = init_fun,
+    #init = init_fun,
     chains = N_CHAINS,
     parallel_chains = N_CHAINS,
     iter_warmup = N_WARMUP,
@@ -147,7 +147,7 @@ mcmc_trace(output$draws(vars))
 ```
 
 ```{r}
-valid_chains <- c(1:3)
+valid_chains <- c(1:3,6)
 output_draws <- output$draws(variables = vars, format = "df") |> 
   subset_draws(chain = valid_chains)
 output_draws_mat <- as.matrix(output_draws)
@@ -155,32 +155,36 @@ output_draws_mat <- as.matrix(output_draws)
 summary(output_draws)
 ```
 
-```{r}
-mcmc_trace(output_draws, pars = c("Sigma[1,2]", "Sigma[2,2]", "Sigma[3,2]"), facet_args = list(nrow = 3))
+```{r fig.height=6}
+mcmc_trace(output_draws, pars = vars(starts_with("Sigma")), 
+           facet_args = list(ncol = 1, strip.position = "right"))
 ```
 
-```{r}
-mcmc_trace(output_draws, pars = c("theta[1,2]", "theta[2,2]", "theta[3,2]"), facet_args = list(nrow = 3))
+```{r fig.height=6}
+mcmc_trace(output_draws, pars = vars(starts_with("theta")), 
+           facet_args = list(ncol = 1, strip.position = "right"))
 ```
-
 
 ## Posterior Predictive Check
 
 ### Target locations
 
 ```{r}
-n_star <- 100
+n_star <- 200
 ts1 <- seq(from = 0, to = 10, length.out = n_star)
 ts2 <- ts1
 ```
 
-
-```{r eval=FALSE}
+```{r}
 # Draw posterior predictive samples using a particular posterior draw
-r <- sample.int(nrow(output_draws_mat), 1)
-this_post <- output_draws_mat[r,]
+post_draw <- as.data.frame(output_draws[sample.int(nrow(output_draws_mat), 1),])
 
-pp_draw <- pred_D2_Q_draw(this_post, t1 = band1_df$t, t2 = band2_df$t, y1 = band1_df$y, y2 = band2_df$y, y1_se = band1_df$y_se, y2_se = band2_df$y_se, ts1 = ts1, ts2 = ts2)
+pp_draw <- pred_D2_Q_draw(post_draw, 
+                          Q = Q, 
+                          t1 = band1_df$t, t2 = band2_df$t, 
+                          y1 = band1_df$y, y2 = band2_df$y, 
+                          y1_se = band1_df$y_se, y2_se = band2_df$y_se, 
+                          ts1 = ts1, ts2 = ts2)
 
 ggplot() +
   geom_line(data = pp_draw, aes(x = ts, y = fs, colour = d)) +
@@ -189,16 +193,17 @@ ggplot() +
 ```
 
 ```{r eval=FALSE}
-pp_draws <- pred_D2_Q(draws = output_draws_mat, 
-                       t1 = band1_df$t, 
-                       t2 = band2_df$t, 
-                       y1 = band1_df$y, 
-                       y2 = band2_df$y, 
-                       y1_se = band1_df$y_se, 
-                       y2_se = band2_df$y_se, 
-                       ts1 = ts1, 
-                       ts2 = ts2, 
-                       n_draws = 100)
+pp_draws <- pred_D2_Q(draws = output_draws, 
+                      Q = Q,
+                      t1 = band1_df$t, 
+                      t2 = band2_df$t, 
+                      y1 = band1_df$y, 
+                      y2 = band2_df$y, 
+                      y1_se = band1_df$y_se, 
+                      y2_se = band2_df$y_se, 
+                      ts1 = ts1, 
+                      ts2 = ts2, 
+                      n_draws = 100)
 
 ggplot() +
   geom_line(data = pp_draws, aes(x = ts, y = fs, group = interaction(d,.draw), colour = d)) +
@@ -216,7 +221,7 @@ input_params # ground truth
 posterior_means <- as.data.frame(output_draws) |> 
   select(matches(vars), -.draw) |> 
   colMeans()
-posterior_means
+posterior_means 
 ```
 
 ```{r}
@@ -289,8 +294,21 @@ output_draws |>
   ggplot() +
   aes(x = `theta[1,2]`) +
   geom_histogram(bins = 40) +
-  geom_vline(xintercept = diff(input_params$theta), linetype = "dashed") +
-  geom_vline(xintercept = posterior_means["theta[2]"], colour = "red") 
+  geom_vline(xintercept = posterior_means["theta[1,2]"], colour = "red") 
 ```
 
+```{r}
+output_draws |> 
+  ggplot() +
+  aes(x = `theta[2,2]`) +
+  geom_histogram(bins = 40) +
+  geom_vline(xintercept = posterior_means["theta[2,2]"], colour = "red") 
+```
 
+```{r}
+output_draws |> 
+  ggplot() +
+  aes(x = `theta[3,2]`) +
+  geom_histogram(bins = 40) +
+  geom_vline(xintercept = posterior_means["theta[3,2]"], colour = "red") 
+```
