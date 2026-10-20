@@ -161,7 +161,7 @@ summary(output_draws)
 ### Target locations
 
 ```{r}
-n_star <- 100
+n_star <- 200
 ts1 <- seq(from = 0, to = 10, length.out = n_star)
 ts2 <- ts1
 ```
@@ -169,10 +169,18 @@ ts2 <- ts1
 
 ```{r}
 # Draw posterior predictive samples using a particular posterior draw
-r <- sample.int(nrow(output_draws_mat), 1)
-this_post <- output_draws_mat[r,]
+idx <- sample.int(nrow(output_draws_mat), 1)
+posterior_draw <- as.data.frame(output_draws[idx,])
+posterior_draw
+```
 
-pp_draw <- pred_D2_Q1_draw(this_post, t1 = band1_df$t, t2 = band2_df$t, y1 = band1_df$y, y2 = band2_df$y, y1_se = band1_df$y_se, y2_se = band2_df$y_se, ts1 = ts1, ts2 = ts2)
+
+```{r}
+pp_draw <- pred_D2_Q1_draw(posterior_draw, 
+                           t1 = band1_df$t, t2 = band2_df$t, 
+                           y1 = band1_df$y, y2 = band2_df$y, 
+                           y1_se = band1_df$y_se, y2_se = band2_df$y_se, 
+                           ts1 = ts1, ts2 = ts2)
 
 ggplot() +
   geom_line(data = pp_draw, aes(x = ts, y = fs, colour = d)) +
@@ -181,7 +189,7 @@ ggplot() +
 ```
 
 ```{r}
-pp_draws <- pred_D2_Q1(draws = output_draws_mat, 
+pp_draws <- pred_D2_Q1(draws = output_draws, 
                        t1 = band1_df$t, 
                        t2 = band2_df$t, 
                        y1 = band1_df$y, 
@@ -230,6 +238,7 @@ output_draws |>
   ggplot() +
   aes(x = value) +
   geom_histogram(bins = 30) +
+  geom_vline(xintercept = input_params$w, colour = "red") +
   facet_wrap(vars(name), scales = "free_y")
 ```
 
@@ -242,6 +251,7 @@ output_draws |>
   ggplot() +
   aes(x = value) +
   geom_histogram(bins = 30) +
+  geom_vline(xintercept = input_params$Sigma, colour = "red") +
   facet_wrap(vars(name), scales = "free_y")
 ```
 
@@ -254,6 +264,7 @@ output_draws |>
   ggplot() +
   aes(x = value) +
   geom_histogram(bins = 30) +
+  geom_vline(xintercept = input_params$mu, colour = "red") +
   facet_wrap(vars(name), scales = "free")
 ```
 
@@ -266,6 +277,7 @@ output_draws |>
   ggplot() +
   aes(x = value) +
   geom_histogram(bins = 30) +
+  geom_vline(xintercept = input_params$theta, colour = "red") +
   facet_wrap(vars(name), scales = "free_y")
 ```
 
@@ -278,6 +290,7 @@ output_draws |>
   ggplot() +
   aes(x = value) +
   geom_histogram(bins = 30) +
+  geom_vline(xintercept = input_params$phi, colour = "red") +
   facet_wrap(vars(name), scales = "free_y")
 ```
 
