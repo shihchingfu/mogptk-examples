@@ -11,6 +11,7 @@ library(readr)
 library(dplyr)
 library(glue)
 library(here)
+library(jsonlite)
 
 source(here("mogp-utils.R"))
 ```
@@ -27,7 +28,7 @@ The purpose of this notebook is to generate draws from a multi-output spectral m
 D <- 2
 Q <- 3
 
-n_points_per_band <- 200
+n_points_per_band <- 150
 
 pct_missing <- 0.3
 noise_sigma <- 0.5
@@ -43,13 +44,13 @@ output <- sim_D2_Q(
   masked_pct = pct_missing,
   Q = Q,
   params = NULL,
-  noise = rep(noise_sigma, D)
+  noise = rep(noise_sigma, D) #, seed = 0
 )
 
 output_params <- output[[1]]
 output_df <- output[[2]]
 
-output_params |> as.data.frame()
+output_params
 ```
 
 ```{r}
@@ -72,7 +73,7 @@ str(output_df)
 output_filename_stub <- glue("D{D}-Q{Q}-seed{output_params$seed[1]}-n{n_points_per_band*D}-mnar{pct_missing}-noise{noise_sigma}")
 
 df_output_filename <- glue("{output_filename_stub}-sim.csv")
-param_output_filename <- glue("{output_filename_stub}-param.tsv")
+param_output_filename <- glue("{output_filename_stub}-param.json")
 
 write_csv(
   output_df |>
@@ -81,9 +82,8 @@ write_csv(
   here("data", df_output_filename)
 )
 
-write_tsv(
-  as.data.frame(output_params), 
-  here("data", param_output_filename)
-)
+write_json(output_params, here("data", param_output_filename), pretty = TRUE)
+
+read_json(here("data", param_output_filename), simplifyVector = TRUE)
 ```
 
