@@ -43,7 +43,19 @@ output <- sim_D2_Q(
   n_per_band = n_points_per_band, 
   masked_pct = pct_missing,
   Q = Q,
-  params = NULL,
+  params = list(
+    mu = rbind(c(0.5, 0.5),
+               c(1.5, 1.5),
+               c(4.0, 4.6)),
+    Sigma = rbind(c(0.04, 0.04),
+                  c(0.04, 0.04),
+                  c(0.04, 0.04)),
+    theta = rbind(c(0, 2.0),
+                  c(0, 2.0),
+                  c(0, 2.0)),
+    phi = rbind(c(0, 0),
+                c(0, 0),
+                c(0, 0))),
   noise = rep(noise_sigma, D) #, seed = 0
 )
 
