@@ -192,7 +192,10 @@ sim_D2_Q <- function(
   if (is.null(p$w)) {
     p$w <- round(
       sqrt(
-        matrix(runif(2 * Q, min = 0, max = 5), ncol = 2)
+        matrix(
+          runif(2 * Q, min = 0, max = 5),
+          ncol = 2,
+          dimnames = list(NULL, c("mu1", "mu2")))
       ),
       2
     )
@@ -221,11 +224,13 @@ sim_D2_Q <- function(
   }
 
   if (is.null(p$theta)) {
-    p$theta <- cbind(0, round(runif(Q, min = 0, max = (tend - tstart)/4), 2))
+    p$theta <- cbind(theta1 = 0,
+                     theta2 = round(runif(Q, min = 0, max = (tend - tstart)/4), 2))
   }
 
   if (is.null(p$phi)) {
-    p$phi <- cbind(0, round(runif(Q, min = -pi/2, max = pi/2), 2))
+    p$phi <- cbind(phi1 = 0,
+                   phi2 = round(runif(Q, min = -pi/2, max = pi/2), 2))
   }
 
   # Covariance matrix of the stacked vector [y1(t); y2(t)]
