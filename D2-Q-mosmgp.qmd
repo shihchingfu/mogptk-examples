@@ -7,8 +7,8 @@ format:
 
 This notebook contains the workflow for:
 
-- loading groundtruth 2-band (MOGP) time-series, 
-- fitting a multicomponent MOSM GP model, 
+- loading groundtruth 2-band (MOGP) time-series,
+- fitting a multicomponent MOSM GP model,
 - drawing posterior predictive samples,
 - visualising the posteriors .
 
@@ -22,6 +22,7 @@ library(posterior)
 library(bayesplot)
 library(readr)
 library(glue)
+library(jsonlite)
 
 register_knitr_engine(override = FALSE)
 
@@ -30,13 +31,13 @@ color_scheme_set("viridis")
 
 source(here("mogp-utils.R"))
 
-filename_stub <- "D2-Q3-seed6016-n300-mnar0.3-noise0.05"
+filename_stub <- "D2-Q3-seed2312-n300-mnar0.3-noise0.5"
 
-EXECUTE_SAMPLING <- TRUE
+EXECUTE_SAMPLING <- FALSE
 
-N_CHAINS <- 6
-N_WARMUP <- 1000
-N_SAMPLES <- 1000
+N_CHAINS <- 4
+N_WARMUP <- 500
+N_SAMPLES <- 500
 
 # Function estimates the mode of a sample
 estimate_mode <- function(x) {
@@ -51,20 +52,20 @@ input_df <- read_csv(
   col_types = "dddf",
   show_col_types = FALSE)
 
-input_params <- read_tsv(
-  here("data", glue("{filename_stub}-param.tsv")), 
-  show_col_types = FALSE)
+input_params <- read_json(
+  here("data", glue("{filename_stub}-param.json")), 
+  simplifyVector = TRUE)
 
 input_df |> 
   ggplot() +
   aes(x = t, y = y, colour = factor(d)) +
   geom_linerange(aes(ymax = y + y_se, ymin = y - y_se), colour = "black") +
   geom_point() +
-  labs(colour = "Band")
+  labs(colour = "Band", title = glue("M = {NROW(input_df)}"))
 ```
 
 ```{r}
-print(input_params)
+input_params
 ```
 
 # Model Fitting
@@ -80,7 +81,16 @@ D <- 2
 Q <- 3 
 
 band1_df <- filter(input_df, d == 1)
+band1_mean <- mean(band1_df$y)
+band1_sd <- sd(band1_df$y)
+
 band2_df <- filter(input_df, d == 2)
+band2_mean <- mean(band2_df$y)
+band2_sd <- sd(band2_df$y)
+
+ell_min <- median(  diff( sort(input_df$t) )  )
+ell_max <- diff(range(input_df$t))
+ell_loc <- log(sqrt(ell_min * ell_max)) # for log-normal prior
 
 data_list <- list(
   Q = Q,
@@ -88,16 +98,35 @@ data_list <- list(
   N2 = length(band2_df$t),
   t1 = band1_df$t,
   t2 = band2_df$t,
-  y1 = band1_df$y,
-  y2 = band2_df$y,
-  y1_se = band1_df$y_se,
-  y2_se = band2_df$y_se
+  y1 = (band1_df$y - band1_mean)/band1_sd, # standardised
+  y2 = (band2_df$y - band2_mean)/band2_sd,
+  y1_se = band1_df$y_se/band1_sd,
+  y2_se = band2_df$y_se/band2_sd,
+  ell_min = ell_min,
+  ell_max = ell_max,
+  ell_loc = ell_loc,
+  ell_scale = 1,
+  v_scale = 1, # data has been standardised
+  mu_scale = 3
 )
+```
+
+```{r}
+ell_min
+ell_max
+ell_loc
 ```
 
 ### Priors
 
-$$w \sim \mathcal{N}_+(0, 3), \quad \mu \sim \mathcal{N}_+(0, 3), \quad \Sigma \sim \mathcal{N}_+(0, 3), \quad \theta_2 \sim \mathcal{N}(0, 1), \quad \phi_2 \sim \mathrm{U}[-\pi, \pi]$$
+$$w^2 = \frac{v}{\sqrt{2 \pi \Sigma}}, \quad \Sigma = \frac{1}{\ell^2}$$
+
+
+$$
+v \sim \mathcal{N}_+(0, v_\textrm{scale}), \quad \mu \sim \mathcal{N}_+(0, \mu_\textrm{scale}), \quad \ell \sim \mathrm{lognormal}(\ell_\textrm{loc}, \ell_\textrm{scale}), \quad \theta_2 \sim \mathcal{N}(0, 1), \quad \phi_2 \sim \mathrm{U}[-\pi, \pi]
+$$
+
+$$v_\textrm{scale} = 1, \quad \mu_\textrm{scale} = 3, \quad \ell_\textrm{loc} = \log(\sqrt{\ell_\textrm{min}\times \ell_\textrm{max}}, \quad \ell_\textrm{scale} = 1, $$
 
 ```{r}
 format(start_time <- Sys.time())
@@ -105,7 +134,7 @@ format(start_time <- Sys.time())
 if (EXECUTE_SAMPLING) {
   init_fun <- function() {
     list(
-      mu1 = sort(c(0.79, 2.72, 0.2) + rnorm(Q, 0, 0.1)),
+      mu1 = c(0.79, 2.72, 0.2) + rnorm(Q, 0, 0.1),
       mu2 = c(0.93, 2.81, 0.19) + rnorm(Q, 0, 0.1)
     )
   }
@@ -146,13 +175,43 @@ output$summary(variables = vars,
 mcmc_trace(output$draws(vars))
 ```
 
+```{r fig.height=6}
+mcmc_trace(output$draws(vars), pars = vars(starts_with("w")), 
+           facet_args = list(ncol = 1, strip.position = "right"))
+```
+
+```{r fig.height=6}
+mcmc_trace(output$draws(vars), pars = vars(starts_with("mu")), 
+           facet_args = list(ncol = 1, strip.position = "right"))
+```
+
+```{r fig.height=6}
+mcmc_trace(output$draws(vars), pars = vars(starts_with("Sigma")), 
+           facet_args = list(ncol = 1, strip.position = "right"))
+```
+
+```{r fig.height=6}
+mcmc_trace(output$draws(vars), pars = vars(starts_with("theta")), 
+           facet_args = list(ncol = 1, strip.position = "right"))
+```
+
+```{r fig.height=6}
+mcmc_trace(output$draws(vars), pars = vars(starts_with("phi")), 
+           facet_args = list(ncol = 1, strip.position = "right"))
+```
+
 ```{r}
-valid_chains <- c(1:3,6)
+valid_chains <- c(1:4)
 output_draws <- output$draws(variables = vars, format = "df") |> 
   subset_draws(chain = valid_chains)
 output_draws_mat <- as.matrix(output_draws)
 
 summary(output_draws)
+```
+
+```{r}
+mcmc_trace(output$draws(vars) |> 
+  subset_draws(chain = valid_chains))
 ```
 
 ```{r fig.height=6}
@@ -167,15 +226,11 @@ mcmc_trace(output_draws, pars = vars(starts_with("theta")),
 
 ## Posterior Predictive Check
 
-### Target locations
-
 ```{r}
 n_star <- 200
 ts1 <- seq(from = 0, to = 10, length.out = n_star)
 ts2 <- ts1
-```
 
-```{r}
 # Draw posterior predictive samples using a particular posterior draw
 post_draw <- as.data.frame(output_draws[sample.int(nrow(output_draws_mat), 1),])
 
@@ -188,11 +243,11 @@ pp_draw <- pred_D2_Q_draw(post_draw,
 
 ggplot() +
   geom_line(data = pp_draw, aes(x = ts, y = fs, colour = d)) +
-  geom_point(data = input_df, aes(x = t, y = y), size = 0.5) +
+  geom_point(data = input_df, aes(x = t, y = y, fill = d), shape = 21, size = 1.5) +
   labs(colour = "Band")
 ```
 
-```{r eval=FALSE}
+```{r}
 pp_draws <- pred_D2_Q(draws = output_draws, 
                       Q = Q,
                       t1 = band1_df$t, 
@@ -205,23 +260,35 @@ pp_draws <- pred_D2_Q(draws = output_draws,
                       ts2 = ts2, 
                       n_draws = 100)
 
-ggplot() +
-  geom_line(data = pp_draws, aes(x = ts, y = fs, group = interaction(d,.draw), colour = d)) +
-  geom_point(data = input_df, aes(x = t, y = y), size = 1) +
-  labs(colour = "Band")
+pp_draws |> 
+  summarise(.by = c(d, ts),
+            Mean = mean(fs),
+            Q2.5 = quantile(fs, probs = 0.025),
+            Q97.5 = quantile(fs, probs = 0.975),
+            Q16 = quantile(fs, probs = 0.16),
+            Q84 = quantile(fs, probs = 0.84)) |> 
+  ggplot() +
+  aes(x = ts, fill = d) +
+  geom_ribbon(aes(ymin = Q2.5, ymax = Q97.5, alpha = "95%")) +
+  geom_ribbon(aes(ymin = Q16, ymax = Q84, alpha = "68%")) +
+  geom_line(aes(colour = d, y = Mean)) +
+  geom_point(data = input_df, aes(x = t, y = y, fill = d), shape = 21, size = 1) +
+  scale_alpha_manual(values = c(`95%` = 0.2, `68%` = 0.5)) +
+  labs(colour = "Band", fill = "Band", y = "f", x = "t", alpha = "Quantile") +
+  theme(legend.position = "top")
 ```
 
 ## Hyperparameter Posteriors
 
 ```{r}
-input_params # ground truth
+print(input_params) # ground truth
 ```
 
 ```{r}
 posterior_means <- as.data.frame(output_draws) |> 
   select(matches(vars), -.draw) |> 
   colMeans()
-posterior_means 
+posterior_means |> round(3)
 ```
 
 ```{r}
@@ -232,8 +299,8 @@ posterior_modes
 ```{r}
 output_draws |> 
   as.data.frame() |> 
-  select(.draw, starts_with("w[")) |> 
-  pivot_longer(2:6) |> 
+  select(.draw, starts_with("w")) |> 
+  pivot_longer(2:7) |> 
   drop_na(value) |> 
   ggplot() +
   aes(x = value) +
@@ -245,19 +312,19 @@ output_draws |>
 output_draws |> 
   as.data.frame() |> 
   select(.draw, starts_with("Sigma")) |> 
-  pivot_longer(2:6) |> 
+  pivot_longer(2:7) |> 
   drop_na(value) |> 
   ggplot() +
   aes(x = value) +
-  geom_histogram(bins = 30) +
-  facet_wrap(vars(name), scales = "free_y")
+  geom_histogram(bins = 50) +
+  facet_wrap(vars(name), scales = "free")
 ```
 
 ```{r}
 output_draws |> 
   as.data.frame() |> 
   select(.draw, starts_with("mu")) |> 
-  pivot_longer(2:6) |> 
+  pivot_longer(2:7) |> 
   drop_na(value) |> 
   ggplot() +
   aes(x = value) +
@@ -269,7 +336,7 @@ output_draws |>
 output_draws |> 
   as.data.frame() |> 
   select(.draw, starts_with("theta")) |> 
-  pivot_longer(2:6) |> 
+  pivot_longer(2:7) |> 
   drop_na(value) |> 
   ggplot() +
   aes(x = value) +
@@ -281,12 +348,16 @@ output_draws |>
 output_draws |>
   as.data.frame() |> 
   select(.draw, starts_with("phi")) |>
-  pivot_longer(2:6) |>
+  pivot_longer(2:7) |>
   drop_na(value) |>
   ggplot() +
   aes(x = value) +
   geom_histogram(bins = 30) +
   facet_wrap(vars(name), scales = "free_y")
+```
+
+```{r}
+input_params$theta
 ```
 
 ```{r}
@@ -312,3 +383,86 @@ output_draws |>
   geom_histogram(bins = 40) +
   geom_vline(xintercept = posterior_means["theta[3,2]"], colour = "red") 
 ```
+
+# Interpreting $\mu$s
+
+```{r}
+mus <- as.data.frame(output_draws) |> 
+  select(matches("mu"), -.draw) |> 
+  colMeans() |> 
+  matrix(ncol = 2)
+mus
+```
+
+Each cell indicates the dominant oscillation frequency (radians/unit time) of the q-th (row) component in the i-th (column) band.
+
+Cells are labelled in ordered by $\mu$ therefore highest frequency component in band 1 has frequency 2.88 radians per unit time.
+
+Where each mu differs between bands (in all components in this case), the cross-covariance has a frequency that is the variance weighted average of the two, i.e., $\mu_{ij}$ is frequency of the product of two Gaussians pulled towards the one with the narrower peak.
+
+As the $\mu$s become more separated, the component is really two unrelated oscillators. In such cases, $\theta$ and $\phi$ are no longer meaningful and just reflect their priors.
+
+
+# Interpreting $\theta$s
+
+Entry theta[q, i] is band `i`’s (column) time shift within component `q` (row).
+
+The delay between bands 1 and 2 in component q is `theta[q, 1] − theta[q, 2]`.
+
+A delay is only meaningful relative to how fast the cross-covariance decays.
+
+```{r}
+thetas <- as.data.frame(output_draws) |> 
+  select(matches("theta"), -.draw) |> 
+  colMeans() |> 
+  matrix(ncol = 2)
+thetas
+```
+
+```{r}
+phis <- as.data.frame(output_draws) |> 
+  select(matches("phi"), -.draw) |> 
+  colMeans() |> 
+  matrix(ncol = 2)
+phis
+```
+
+For example, `theta[1,2]` = 0.040, means that in component 1, the time shift between band 2 and band 1 is 0.040. Alternatively, component 2 in band 1 at time $t$ lines up with band 2 at $t - 0.040$.
+
+
+A time shift of $\theta$ corresponds to a phase shift of $\mu_{ij} \times \theta_{ij} + \phi_{ij}$ radians, i.e., the net phase offset at that frequency.
+
+
+```{r}
+mus * thetas + phis
+```
+
+# Interpreting $\Sigma$s
+
+$\Sigma$s refer to the widths of the bumps in the spectral domain centred at the $\mu$s.
+
+Coherence length is $\ell = \frac{1}{\sqrt{\Sigma}}$. There cannot be a stable cross-covariance, if two oscillators already drift out of phase within just one coherence length. Long coherence lengths (narrow spectral peaks) make the $\mu$ gap matter more, short coherence lengths (broad spectral peaks) make the gap matter less.
+
+If cross-covariance is zero, then there's insufficient information to estimate $\theta$ or $\phi$. $\mu$s are still identifiable but this component is really two unrelated oscillators, i.e., there is no shared signal to be delayed between bands.
+
+```{r}
+Sigmas <- as.data.frame(output_draws) |> 
+  select(matches("Sigma"), -.draw) |> 
+  colMeans() |> 
+  sqrt() |> 
+  matrix(ncol = 2)
+Sigmas
+```
+
+# Interpreting $w$
+
+```{r}
+ws <- as.data.frame(output_draws) |> 
+  select(matches("w"), -.draw) |> 
+  colMeans() |> 
+  sqrt() |> 
+  matrix(ncol = 2)
+ws
+```
+
+If $w$ was near zero (not in this case), then $\theta$ and $\phi$ for that component revert to their prior. 
