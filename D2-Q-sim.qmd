@@ -27,10 +27,10 @@ The purpose of this notebook is to generate draws from a multi-output spectral m
 D <- 2
 Q <- 3
 
-n_points_per_band <- 150
+n_points_per_band <- 200
 
 pct_missing <- 0.3
-noise_sigma <- 0.05
+noise_sigma <- 0.5
 
 i <- 1
 errored <- TRUE
@@ -41,20 +41,24 @@ output <- sim_D2_Q(
   tend = 10,
   n_per_band = n_points_per_band, 
   masked_pct = pct_missing,
-  noise = rep(noise_sigma, 2), 
-  Q = 3
+  Q = Q,
+  params = NULL,
+  noise = rep(noise_sigma, D)
 )
 
 output_params <- output[[1]]
 output_df <- output[[2]]
-output_params
+
+output_params |> as.data.frame()
 ```
 
 ```{r}
 output_df |> 
   ggplot() +
-  aes(x = t, y = y, alpha = ifelse(masked, 0.2, 1), colour = d) +
+  aes(x = t, y = y, colour = d, alpha = ifelse(masked, 0.2, 1)) +
+  geom_linerange(aes(ymax = y + y_se, ymin = y - y_se), colour = "black") +
   geom_point() +
+  geom_line(size = 0.5, alpha = 0.3) +
   geom_rug(sides = "b", position = "jitter") +
   labs(title = paste("Seed =", output_params$seed), colour = "Band") +
   theme(legend.position = "none")
@@ -78,7 +82,7 @@ write_csv(
 )
 
 write_tsv(
-  output_params, 
+  as.data.frame(output_params), 
   here("data", param_output_filename)
 )
 ```
