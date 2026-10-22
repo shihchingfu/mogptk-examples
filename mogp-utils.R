@@ -195,7 +195,7 @@ sim_D2_Q <- function(
         matrix(
           runif(2 * Q, min = 0, max = 5),
           ncol = 2,
-          dimnames = list(NULL, c("mu1", "mu2")))
+          dimnames = list(NULL, c("w1", "w2")))
       ),
       2
     )
