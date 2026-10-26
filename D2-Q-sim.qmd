@@ -30,7 +30,7 @@ Q <- 3
 
 n_points_per_band <- 150
 
-pct_missing <- 0.3
+pct_missing <- 0.2
 noise_sigma <- 0.5
 
 i <- 1
@@ -44,15 +44,18 @@ output <- sim_D2_Q(
   masked_pct = pct_missing,
   Q = Q,
   params = list(
-    mu = rbind(c(0.5, 0.5),
-               c(1.5, 1.5),
-               c(4.0, 4.6)),
-    Sigma = rbind(c(0.04, 0.04),
-                  c(0.04, 0.04),
-                  c(0.04, 0.04)),
-    theta = rbind(c(0, 2.0),
-                  c(0, 2.0),
-                  c(0, 2.0)),
+    w = rbind(c(1, 1),
+              c(1, 1),
+              c(1, 1)),
+    mu = rbind(c(1, 1),
+               c(2, 2),
+               c(5, 6)),
+    Sigma = rbind(c(4, 4),
+                  c(4, 4),
+                  c(4, 4)),
+    theta = rbind(c(0, 0.5),
+                  c(0, 0.5),
+                  c(0, 0.5)),
     phi = rbind(c(0, 0),
                 c(0, 0),
                 c(0, 0))),
@@ -71,9 +74,9 @@ output_df |>
   aes(x = t, y = y, colour = d, alpha = ifelse(masked, 0.2, 1)) +
   geom_linerange(aes(ymax = y + y_se, ymin = y - y_se), colour = "black") +
   geom_point() +
-  geom_line(size = 0.5, alpha = 0.3) +
+  geom_line(linewidth = 0.5, alpha = 0.3) +
   geom_rug(sides = "b", position = "jitter") +
-  labs(title = paste("Seed =", output_params$seed), colour = "Band") +
+  labs(title = glue("Seed = {output_params$seed}, M = {sum(!output_df$masked)}")) +
   theme(legend.position = "none")
 ```
 
