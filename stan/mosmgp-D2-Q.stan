@@ -16,8 +16,8 @@
 //
 // Identifiability:
 //  - Only theta_ij, phi_ij matter, so theta_1^(q) = phi_1^(q) = 0 for all q.
-//  - Label switching between components is prevented by ordering channel-1
-//    means: mu1[1] < mu1[2] < ... < mu1[Q].
+//  - Label switching between components is prevented by ordering Band 1 means:
+//    mu1[1] < mu1[2] < ... < mu1[Q], mu2[1] < mu2[2] < ... < mu2[Q]
 
 functions {
   // Per-component kernel parameters for the channel pair (i, j).
@@ -67,7 +67,8 @@ data {
   real<lower=ell_min> ell_max; // max. envelope width
   real ell_loc; // lognormal prior location for ell (log scale)
   real<lower=0> ell_scale; // lognormal prior scale for ell
-  real<lower=0> v_scale; // prior scale for component variances
+  real<lower=0> signal_sd_scale; // lognormal scale for each band's total signal sd
+  real<lower=0> dir_conc; // Dirichlet concentration (< 1 shrinks components)
   real<lower=0> mu_scale; // prior scale for frequencies (radians/unit time)
 }
 
@@ -80,7 +81,8 @@ transformed data {
 }
 
 parameters {
-  matrix<lower=0>[Q, 2] v; // variance of component q in band i
+  vector<lower=0>[2] signal_sd; // total signal sd per band
+  array[2] simplex[Q] s; // variance share of each component
   positive_ordered[Q] mu1; // band 1 spectral means (ordered)
   vector<lower=0>[Q] mu2;
   matrix<lower=ell_min, upper=ell_max>[Q, 2] ell; // envelope widths
@@ -93,18 +95,24 @@ transformed parameters {
   matrix[Q, 2] mu = append_col(mu1, mu2);
   matrix[Q, 2] theta = append_col(rep_vector(0, Q), theta2);
   matrix[Q, 2] phi = append_col(rep_vector(0, Q), phi2);
+  matrix[Q, 2] v; // variance of component q in band i
   matrix[Q, 2] w;
 
-  // weights derived from component variances
   for (i in 1:2) {
     for (q in 1:Q) {
-      w[q, i] = sqrt(v[q, i] / sqrt(2 * pi() * Sigma[q, i]));
+      v[q, i] = square(signal_sd[i]) * s[i][q]; // simplex s
+      w[q, i] = sqrt(v[q, i] / sqrt(2 * pi() * Sigma[q, i])); // derived from v
     }
   }
 }
 
 model {
-  to_vector(v) ~ normal(0, v_scale); // half normal
+  signal_sd ~ lognormal(0, signal_sd_scale); // data standardised, centred on 1
+
+  for (i in 1:2) {
+    s[i] ~ dirichlet(rep_vector(dir_conc, Q));
+  }
+
   mu1 ~ normal(0, mu_scale);
   mu2 ~ normal(0, mu_scale);
   to_vector(ell) ~ lognormal(ell_loc, ell_scale);
