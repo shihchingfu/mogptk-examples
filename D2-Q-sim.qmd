@@ -11,6 +11,7 @@ library(readr)
 library(dplyr)
 library(glue)
 library(here)
+library(jsonlite)
 
 source(here("mogp-utils.R"))
 ```
@@ -30,7 +31,7 @@ Q <- 3
 n_points_per_band <- 150
 
 pct_missing <- 0.3
-noise_sigma <- 0.05
+noise_sigma <- 0.5
 
 i <- 1
 errored <- TRUE
@@ -41,20 +42,36 @@ output <- sim_D2_Q(
   tend = 10,
   n_per_band = n_points_per_band, 
   masked_pct = pct_missing,
-  noise = rep(noise_sigma, 2), 
-  Q = 3
+  Q = Q,
+  params = list(
+    mu = rbind(c(0.5, 0.5),
+               c(1.5, 1.5),
+               c(4.0, 4.6)),
+    Sigma = rbind(c(0.04, 0.04),
+                  c(0.04, 0.04),
+                  c(0.04, 0.04)),
+    theta = rbind(c(0, 2.0),
+                  c(0, 2.0),
+                  c(0, 2.0)),
+    phi = rbind(c(0, 0),
+                c(0, 0),
+                c(0, 0))),
+  noise = rep(noise_sigma, D) #, seed = 0
 )
 
 output_params <- output[[1]]
 output_df <- output[[2]]
+
 output_params
 ```
 
 ```{r}
 output_df |> 
   ggplot() +
-  aes(x = t, y = y, alpha = ifelse(masked, 0.2, 1), colour = d) +
+  aes(x = t, y = y, colour = d, alpha = ifelse(masked, 0.2, 1)) +
+  geom_linerange(aes(ymax = y + y_se, ymin = y - y_se), colour = "black") +
   geom_point() +
+  geom_line(size = 0.5, alpha = 0.3) +
   geom_rug(sides = "b", position = "jitter") +
   labs(title = paste("Seed =", output_params$seed), colour = "Band") +
   theme(legend.position = "none")
@@ -68,7 +85,7 @@ str(output_df)
 output_filename_stub <- glue("D{D}-Q{Q}-seed{output_params$seed[1]}-n{n_points_per_band*D}-mnar{pct_missing}-noise{noise_sigma}")
 
 df_output_filename <- glue("{output_filename_stub}-sim.csv")
-param_output_filename <- glue("{output_filename_stub}-param.tsv")
+param_output_filename <- glue("{output_filename_stub}-param.json")
 
 write_csv(
   output_df |>
@@ -77,9 +94,8 @@ write_csv(
   here("data", df_output_filename)
 )
 
-write_tsv(
-  output_params, 
-  here("data", param_output_filename)
-)
+write_json(output_params, here("data", param_output_filename), pretty = TRUE)
+
+read_json(here("data", param_output_filename), simplifyVector = TRUE)
 ```
 

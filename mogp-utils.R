@@ -176,7 +176,7 @@ sim_D2_Q <- function(
     tend = 10,
     n_per_band = 100,
     masked_pct = 0,
-    Q = 2,
+    Q,
     params = list(
       w = NULL,
       mu = NULL,
@@ -186,36 +186,51 @@ sim_D2_Q <- function(
     noise = c(0, 0), # observation noise std
     seed = round(runif(1, min = 0, max = 9999))
 ) {
+  set.seed(seed)
+  p <- params
 
-  if (is.null(params$w)) {
-    w <- round(
+  if (is.null(p$w)) {
+    p$w <- round(
       sqrt(
-        matrix(runif(2 * Q, min = 0, max = 5), ncol = 2)
+        matrix(
+          runif(2 * Q, min = 0, max = 5),
+          ncol = 2,
+          dimnames = list(NULL, c("w1", "w2")))
       ),
       2
     )
   }
 
-  if (is.null(params$mu)) {
-    mu1 <- round((runif(Q, min = 0, max = 10)), 2) # period = 2*pi/mu
+  if (is.null(p$mu)) {
+    mu1 <- round((runif(Q, min = 0, max = 5)), 2) # period = 2*pi/mu
     mu2 <- round(rnorm(Q, mu1, sd = 1), 2)
-    mu <- cbind(mu1, mu2)
 
-    params$mu
+    while(any(mu2 <= 0)) {
+      mu2 <- round(rnorm(Q, mu1, sd = 1), 2)
+    }
+
+    p$mu <- cbind(mu1, mu2)
   }
 
-  if (is.null(params$Sigma)) {
+  if (is.null(p$Sigma)) {
     Sigma1 <- round(runif(Q, min = 0, max = 5), 2)^2
-    Sigma2 <- round(rnorm(Q, Sigma1, sd = 1), 2)
-    Sigma <- cbind(Sigma1, Sigma2)
+    Sigma2 <- round(rnorm(Q, mean = Sigma1, sd = 0.5), 2)
+
+    while(any(Sigma2 <= 0)) {
+      Sigma2 <- round(rnorm(Q, mean = Sigma1, sd = 0.5), 2)
+    }
+
+    p$Sigma <- cbind(Sigma1, Sigma2)
   }
 
-  if (is.null(params$theta)) {
-    theta <- cbind(0, round(runif(Q, min = 0, max = 5), 2))
+  if (is.null(p$theta)) {
+    p$theta <- cbind(theta1 = 0,
+                     theta2 = round(runif(Q, min = 0, max = (tend - tstart)/4), 2))
   }
 
-  if (is.null(params$phi)) {
-    phi <- cbind(0, round(runif(Q, min = -pi, max = pi), 2))
+  if (is.null(p$phi)) {
+    p$phi <- cbind(phi1 = 0,
+                   phi2 = round(runif(Q, min = -pi/2, max = pi/2), 2))
   }
 
   # Covariance matrix of the stacked vector [y1(t); y2(t)]
@@ -224,12 +239,12 @@ sim_D2_Q <- function(
   N1 <- length(t1)
   N2 <- length(t2)
 
-  K <- K_D2_Q(t1, t2, params) +
+  K <- K_D2_Q(t1, t2, p) +
     diag(c(rep(noise[1]^2, N1), rep(noise[2]^2, N2))) +
     diag(1e-6, N1 + N2) # jitter
 
   # Sample
-  set.seed(seed)
+
   y <- t(chol(K)) %*% rnorm(N1 + N2)
 
   output_df <- data.frame(
@@ -242,11 +257,11 @@ sim_D2_Q <- function(
 
   params_df <- list(
     seed = seed,
-    w = w,
-    mu = mu,
-    Sigma = Sigma,
-    theta = theta,
-    phi = phi
+    w = p$w,
+    mu = p$mu,
+    Sigma = p$Sigma,
+    theta = p$theta,
+    phi = p$phi
   )
 
   return(list(params_df, output_df))

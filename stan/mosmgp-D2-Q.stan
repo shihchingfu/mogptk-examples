@@ -60,8 +60,15 @@ data {
   vector[N2] t2;
   vector[N1] y1;
   vector[N2] y2;
-  vector[N1] y1_se;
-  vector[N2] y2_se;
+  vector<lower=0>[N1] y1_se;
+  vector<lower=0>[N2] y2_se;
+
+  real<lower=0> ell_min; // min. envelope width
+  real<lower=ell_min> ell_max; // max. envelope width
+  real ell_loc; // lognormal prior location for ell (log scale)
+  real<lower=0> ell_scale; // lognormal prior scale for ell
+  real<lower=0> v_scale; // prior scale for component variances
+  real<lower=0> mu_scale; // prior scale for frequencies (radians/unit time)
 }
 
 transformed data {
@@ -73,28 +80,36 @@ transformed data {
 }
 
 parameters {
-  matrix<lower=0>[Q, 2] w;
-  positive_ordered[Q] mu1;
+  matrix<lower=0>[Q, 2] v; // variance of component q in band i
+  positive_ordered[Q] mu1; // band 1 spectral means (ordered)
   vector<lower=0>[Q] mu2;
-  matrix<lower=0>[Q, 2] Sigma;
-  vector[Q] theta2;                        // delay of band 2 relative to 1, per component
-  vector<lower=-pi(), upper=pi()>[Q] phi2; // phase of band 2 relative to 1, per component
+  matrix<lower=ell_min, upper=ell_max>[Q, 2] ell; // envelope widths
+  vector[Q] theta2; // delay of band 2 relative to 1
+  vector<lower=-pi(), upper=pi()>[Q] phi2; // phase of band 2 relative to 1
 }
 
 transformed parameters {
+  matrix[Q, 2] Sigma = inv_square(ell); // spectral variances
   matrix[Q, 2] mu = append_col(mu1, mu2);
   matrix[Q, 2] theta = append_col(rep_vector(0, Q), theta2);
   matrix[Q, 2] phi = append_col(rep_vector(0, Q), phi2);
+  matrix[Q, 2] w;
+
+  // weights derived from component variances
+  for (i in 1:2) {
+    for (q in 1:Q) {
+      w[q, i] = sqrt(v[q, i] / sqrt(2 * pi() * Sigma[q, i]));
+    }
+  }
 }
 
 model {
-  // Priors (adjust to your data's scale)
-  to_vector(w) ~ normal(0, 3);
-  mu1 ~ normal(0, 3);
-  mu2 ~ normal(0, 3);
-  to_vector(Sigma) ~ normal(0, 3);
-  theta2 ~ normal(0, 3);
-  // phi2: uniform on (-pi, pi) implied by bounds
+  to_vector(v) ~ normal(0, v_scale); // half normal
+  mu1 ~ normal(0, mu_scale);
+  mu2 ~ normal(0, mu_scale);
+  to_vector(ell) ~ lognormal(ell_loc, ell_scale);
+  theta2 ~ normal(0, 1);
+  phi2 ~ uniform(-pi(), pi());
 
   // Per-component kernel parameters for each distinct channel pair
   matrix[Q, 5] p11 = pair_pars(1, 1, w, mu, Sigma, theta, phi);
