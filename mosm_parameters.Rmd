@@ -1,0 +1,71 @@
+---
+title: "MOSM model parameters"
+subtitle: "Two bands, Q spectral components (Parra & Tobar, 2017 notation)"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+- Time units are those of the observation times. 
+- Components are indexed by $q = 1, \dots, Q$ and bands by $i \in \{1, 2\}$.
+- `s` is indexed `[band, component]`
+- while `v`, `w`, `mu`, `Sigma`, `ell`, `theta` and `phi` are `[component, band]`.
+
+## Sampled parameters
+
+| Parameter | Indexing | Meaning | Units / range | Notes |
+|---|---|---|---|---|
+| `signal_sd` $S$| `[band]` | Total standard deviation of the signal in each band, excluding observed noise | Data units (about 1 if standardised) | Should always be interpretable |
+| `s` $\pi$| `[band, component]` | Share of the band's signal variance carried by each component (row sums = 1) | 0 to 1 | Interpret within components across bands |
+| `mu1` | `[component]` | Centre frequency of each component in band 1; ordered to prevent label switching | radians / time unit | Only interpret if component has non-negligible `s` |
+| `mu2` | `[component]` | Centre frequency of each component in band 2 | radians / unit time | as above |
+| `ell` $\ell$| `[component, band]` | Coherence "envelope" length, i.e., how long the oscillation stays correlated [`ell_min`, `ell_max`] | Time units | Check not pushed against bounds and not near zero |
+| `theta2` | `[component]` | Time delay of band 2 relative to band 1, within component (`theta[q,1] = 0`) | Time units | Only sensible if bands are "coupled" within component. Wraps around by period of oscilation. |
+| `phi2` | `[component]` | Constant phase offset of band 2 relative to band 1 (`phi[q,1] = 0`). Not frequency dependent. $\phi = \pi$ indicates sign flip | Radians [$-\pi$, $\pi$] | As with `theta2`, needs coupling to be meaningful |
+
+## Derived quantities (Parra & Tobar, 2017) 
+
+- $Q \times i$ matrices.
+
+| Quantity | Indexing | Meaning | Formula / relation |
+|---|---|---|---|
+| `Sigma` $\Sigma$ | `[component, band]` | Spectral **variance**: spread of component's power about `mu` | $\Sigma = \frac{1}{\ell^2}$; (radians/unit time)$^2$ |
+| `v` | `[component, band]` | Signal variance contributed by a component to a band | $v = S^2 \cdot \pi$ |
+| `w` | `[component, band]` | Amplitude weight/magnitude | $w = \sqrt{\frac{v}{\sqrt{2\pi\Sigma}}}$ |
+| `mu`, `theta`, `phi` | `[component, band]` | Parameters mentioned above | First column of `theta` and `phi` are zeros |
+
+## Cross-band quantities inside the kernel
+
+Per component, for the pair of bands $(i, j)$.
+
+| Quantity | Meaning | Formula |
+|---|---|---|
+| $\theta_{ij}$ | Delay. Centre location of cross-covariance envelope | $\theta_i - \theta_j$ ($= \theta_2$ in this case since $\theta_1 = 0$).|
+| $\phi_{ij}$ | Phase offset | $\phi_i - \phi_j$ ($= \phi_2$)|
+| $\mu_{ij}$ | Frequency at which the cross-covariance oscillates | $\frac{\Sigma_j \mu_i + \Sigma_i \mu_j}{\Sigma_i + \Sigma_j}$; Variance-weighted average of $\mu_i$ and $\mu_j$. |
+| $\Sigma_{ij}$ | Width (decay rate or length scale) of the cross-covariance envelope | $\frac{2\Sigma_i\Sigma_j}{\Sigma_i + \Sigma_j}$ |
+| $w_{ij}$ | Strength of coupling; falls as the two band frequencies move apart | $w_i w_j \exp\!\left\{- \frac{1}{4}\frac{(\mu_i - \mu_j)^2}{\Sigma_i + \Sigma_j}\right\}$ |
+| $\alpha_{ij}$ | Amplitude of the cross-covariance | $w_{ij}\sqrt{2\pi\Sigma_{ij}}$ |
+| Net phase | Phase offset of the cross-covariance oscillation at zero lag | $\mu_{ij}\,\theta_{ij} + \phi_{ij}$ |
+
+The cross-covariance for 1 component:
+
+$$
+k_{ij}(\tau) = \alpha_{ij}\,
+\exp\!\left(-\tfrac{1}{2}\Sigma_{ij}(\tau + \theta_{ij})^2\right)
+\cos\!\big(\mu_{ij}(\tau + \theta_{ij}) + \phi_{ij}\big)
+$$
+
+
+## Data and settings
+
+| Item | Meaning |
+|---|---|
+| `t1`, `t2`, `y1`, `y2` | Observation times and values for each band (counts `N1`, `N2` may differ) |
+| `y1_sd`, `y2_sd` | Known observation standard deviation at each point; not fitted |
+| `ell_min`, `ell_max` | Bounds on the coherence length (about the sampling spacing and the record length) |
+| `ell_loc`, `ell_scale` | Location and scale of the lognormal prior on `ell` |
+| `signal_sd_scale` | Scale of the lognormal prior on `signal_sd` |
+| `dir_conc` | Dirichlet concentration for `s`; below 1 shrinks unused components |
+| `mu_scale` | Prior scale for the frequencies |
