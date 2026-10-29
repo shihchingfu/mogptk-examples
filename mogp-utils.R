@@ -183,7 +183,7 @@ sim_D2_Q <- function(
       Sigma = NULL,
       theta = NULL,
       phi = NULL),
-    noise = c(0, 0), # observation noise std
+    noise_sd = c(0, 0), # observation noise std
     seed = round(runif(1, min = 0, max = 9999))
 ) {
   set.seed(seed)
@@ -205,7 +205,7 @@ sim_D2_Q <- function(
     mu1 <- round((runif(Q, min = 0, max = 5)), 2) # period = 2*pi/mu
     mu2 <- round(rnorm(Q, mu1, sd = 1), 2)
 
-    while(any(mu2 <= 0)) {
+    while (any(mu2 <= 0)) {
       mu2 <- round(rnorm(Q, mu1, sd = 1), 2)
     }
 
@@ -216,7 +216,7 @@ sim_D2_Q <- function(
     Sigma1 <- round(runif(Q, min = 0, max = 5), 2)^2
     Sigma2 <- round(rnorm(Q, mean = Sigma1, sd = 0.5), 2)
 
-    while(any(Sigma2 <= 0)) {
+    while (any(Sigma2 <= 0)) {
       Sigma2 <- round(rnorm(Q, mean = Sigma1, sd = 0.5), 2)
     }
 
@@ -239,18 +239,21 @@ sim_D2_Q <- function(
   N1 <- length(t1)
   N2 <- length(t2)
 
-  K <- K_D2_Q(t1, t2, p) +
-    diag(c(rep(noise[1]^2, N1), rep(noise[2]^2, N2))) +
-    diag(1e-6, N1 + N2) # jitter
+  K <- K_D2_Q(t1, t2, p) + diag(1e-6, N1 + N2) # jitter
+
+  noise_sds <- rep(noise_sd, times = c(N1, N2))
 
   # Sample
+  z <- rnorm(N1 + N2)
+  f <- t(chol(K)) %*% z
 
-  y <- t(chol(K)) %*% rnorm(N1 + N2)
+  y <- f + noise_sds * rnorm(N1 + N2)
 
   output_df <- data.frame(
     t = c(t1, t2),
+    f = f,
     y = y,
-    y_se = rep(noise, times = c(N1, N2)),
+    y_se = noise_sds,
     d = factor(rep(c(1, 2), times = c(N1, N2))),
     masked = create_block_missing_mask(N1 + N2, masked_pct, seed)
   )

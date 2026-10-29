@@ -33,8 +33,6 @@ n_points_per_band <- 150
 pct_missing <- 0.2
 noise_sigma <- 0.5
 
-i <- 1
-errored <- TRUE
 output <- NULL
 
 output <- sim_D2_Q(
@@ -59,23 +57,21 @@ output <- sim_D2_Q(
     phi = rbind(c(0, 0),
                 c(0, 0),
                 c(0, 0))),
-  noise = rep(noise_sigma, D) #, seed = 0
+  noise_sd = rep(noise_sigma, D), seed = 4458
 )
 
 output_params <- output[[1]]
 output_df <- output[[2]]
 
-output_params
-```
+#output_params
 
-```{r}
 output_df |> 
   ggplot() +
-  aes(x = t, y = y, colour = d, alpha = ifelse(masked, 0.2, 1)) +
+  aes(x = t, colour = d, alpha = ifelse(masked, 0.2, 1)) +
   geom_linerange(aes(ymax = y + y_se, ymin = y - y_se), colour = "black") +
-  geom_point() +
-  geom_line(linewidth = 0.5, alpha = 0.3) +
-  geom_rug(sides = "b", position = "jitter") +
+  geom_point(aes(y = y)) +
+  geom_line(aes(y = f), linewidth = 0.5, alpha = 0.3) +
+  geom_rug(aes(y = y), sides = "b", position = "jitter") +
   labs(title = glue("Seed = {output_params$seed}, M = {sum(!output_df$masked)}")) +
   theme(legend.position = "none")
 ```
@@ -90,12 +86,7 @@ output_filename_stub <- glue("D{D}-Q{Q}-seed{output_params$seed[1]}-n{n_points_p
 df_output_filename <- glue("{output_filename_stub}-sim.csv")
 param_output_filename <- glue("{output_filename_stub}-param.json")
 
-write_csv(
-  output_df |>
-    filter(!masked) |> 
-    select(-masked), 
-  here("data", df_output_filename)
-)
+write_csv(output_df, here("data", df_output_filename))
 
 write_json(output_params, here("data", param_output_filename), pretty = TRUE)
 
