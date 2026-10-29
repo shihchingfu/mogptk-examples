@@ -32,8 +32,6 @@ n_points_per_band <- 150
 pct_missing <- 0.3
 noise_sigma <- 0.05
 
-i <- 1
-errored <- TRUE
 output <- NULL
 
 output <- sim_D2_Q1(
