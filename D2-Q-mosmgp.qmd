@@ -72,23 +72,24 @@ plot_draw_histograms <- function(draws, parameter_name) {
 ```
 
 ```{r}
-input_df <- read_csv(
+raw_df <- read_csv(
   here("data", glue("{filename_stub}-sim.csv")), 
-  col_types = "dddf",
+  col_types = "ddddfl",
   show_col_types = FALSE)
 
 input_params <- read_json(
   here("data", glue("{filename_stub}-param.json")), 
   simplifyVector = TRUE)
 
-input_df |> 
+raw_df |> 
   ggplot() +
-  aes(x = t, y = y, colour = factor(d)) +
+  aes(x = t, colour = d, alpha = ifelse(masked, 0.2, 1)) +
   geom_linerange(aes(ymax = y + y_se, ymin = y - y_se), colour = "black") +
-  geom_point() +
-  geom_rug(sides = "b", position = "jitter") +
-  labs(colour = "Band", 
-       title = glue("Seed = {input_params$seed}, M = {NROW(input_df)}"))
+  geom_point(aes(y = y)) +
+  geom_line(aes(y = f), linewidth = 0.5, alpha = 0.3) +
+  geom_rug(aes(y = y), sides = "b", position = "jitter") +
+  labs(title = glue("Seed = {input_params$seed}, M = {sum(!raw_df$masked)}/{NROW(raw_df)}")) +
+  theme(legend.position = "none")
 ```
 
 Notes on data:
@@ -113,29 +114,57 @@ input_params
 stan_model <- cmdstan_model(here("stan", "mosmgp-D2-Q.stan"))
 ```
 
-## Sampling
+```{r}
+if (FALSE) {
+  # Fully sampled, noise free dataset
+  input_df <- raw_df |> 
+    mutate(y = f,
+           y_se = 0,
+           masked = FALSE)
+} else {
+  input_df <- raw_df |> 
+    filter(!masked)
+}
+```
 
 ```{r}
 D <- 2
 Q <- 3 
 
+# Within-band standardisation
 band1_df <- filter(input_df, d == 1)
-band1_mean <- mean(band1_df$y)
-band1_sd <- sd(band1_df$y)
+band1_f_mean <- mean(band1_df$f)
+band1_f_sd <- sd(band1_df$f)
+band1_y_mean <- mean(band1_df$y)
+band1_y_sd <- sd(band1_df$y)
+
+band1_df$f_std <- (band1_df$f - band1_f_mean)/band1_f_sd
+band1_df$y_std <- (band1_df$y - band1_y_mean)/band1_y_sd
+band1_df$y_se_std <- band1_df$y_se/band1_y_sd
+
 
 band2_df <- filter(input_df, d == 2)
-band2_mean <- mean(band2_df$y)
-band2_sd <- sd(band2_df$y)
+band2_f_mean <- mean(band2_df$f)
+band2_f_sd <- sd(band2_df$f)
+band2_y_mean <- mean(band2_df$y)
+band2_y_sd <- sd(band2_df$y)
 
-ell_min <- diff( sort(input_df$t) ) |> median() 
+band2_df$f_std <- (band2_df$f - band2_f_mean)/band2_f_sd
+band2_df$y_std <- (band2_df$y - band2_y_mean)/band2_y_sd
+band2_df$y_se_std <- band2_df$y_se/band2_y_sd
+
+input_df$f_std <- c(band1_df$f_std, band2_df$f_std)
+input_df$y_std <- c(band1_df$y_std, band2_df$y_std)
+input_df$y_se_std <- c(band1_df$y_se_std, band2_df$y_se_std)
+
+```
+
+## Sampling
+
+```{r}
+ell_min <- diff( sort(input_df$t) ) |> mean() 
 ell_max <- diff(range(input_df$t))
 ell_loc <- log(sqrt(ell_min * ell_max)) # for log-normal prior
-
-band1_df$y_std <- (band1_df$y - band1_mean)/band1_sd # standardised
-band1_df$y_se_std <- band1_df$y_se/band1_sd
-
-band2_df$y_std <- (band2_df$y - band2_mean)/band2_sd
-band2_df$y_se_std <- band2_df$y_se/band2_sd
 
 data_list <- list(
   Q = Q,
@@ -169,7 +198,7 @@ format(start_time <- Sys.time())
 if (EXECUTE_SAMPLING) {
   init_fun <- function() {
     list(
-      signal_sd = c(0.8, 0.8),
+      #signal_sd = c(0.8, 0.8),
       s = rbind(rep(1 / Q, Q), rep(1 / Q, Q))   # array[2] simplex[Q]
       #mu1 = c(1, 2, 5) + rnorm(Q, 0, 0.5),
       #mu2 = c(1, 2, 6) + rnorm(Q, 0, 0.5)
@@ -244,7 +273,7 @@ mcmc_trace(output$draws(sampled_vars), pars = vars(starts_with("phi")),
 ## Valid Chains
 
 ```{r}
-valid_chains <- c(3,4,6)
+valid_chains <- c(3,4)
 
 output_draws <- output$draws(variables = all_vars, format = "df") |> 
   subset_draws(chain = valid_chains)
@@ -272,17 +301,32 @@ pp_draw <- pred_D2_Q_draw(post_draw,
                           y2_se = band2_df$y_se_std, 
                           ts1 = ts1, ts2 = ts2)
 
+mean_colvec <- rep(c(band1_y_mean, band2_y_mean), times = c(length(ts1), length(ts2)))
+sd_colvec <- rep(c(band1_y_sd, band2_y_sd), times = c(length(ts1), length(ts2)))
+
 ggplot() +
-  geom_linerange(data = rbind(band1_df, band2_df), 
+  geom_linerange(data = input_df, 
+                 mapping = aes(x = t, ymax = y + y_se, ymin = y - y_se), colour = "black") +
+  geom_line(data = pp_draw, 
+            mapping = aes(x = ts, y = fs*sd_colvec + mean_colvec, colour = d)) +
+  geom_point(data = input_df, 
+             mapping = aes(x = t, y = y, fill = d), shape = 21, size = 1.5) +
+  labs(colour = "Band", fill = "Band", y = "f")
+```
+
+```{r}
+ggplot() +
+  geom_linerange(data = input_df, 
                  mapping = aes(x = t, 
                                ymax = y_std + y_se_std, 
                                ymin = y_std - y_se_std), 
                  colour = "black") +
   geom_line(data = pp_draw, aes(x = ts, y = fs, colour = d)) +
-  geom_point(data = rbind(band1_df, band2_df), 
+  geom_point(data = input_df, 
              mapping = aes(x = t, y = y_std, fill = d), shape = 21, size = 1.5) +
   labs(colour = "Band", fill = "Band", y = "Standardised f")
 ```
+
 
 ```{r}
 pp_draws <- pred_D2_Q(draws = output_draws, 
@@ -309,10 +353,10 @@ pp_draws |>
   geom_ribbon(aes(ymin = Q2.5, ymax = Q97.5, alpha = "95%")) +
   geom_ribbon(aes(ymin = Q16, ymax = Q84, alpha = "68%")) +
   geom_line(aes(colour = d, y = Mean)) +
-  geom_linerange(data = rbind(band1_df, band2_df), 
+  geom_linerange(data = input_df, 
                  mapping = aes(x = t, ymax = y_std + y_se_std, ymin = y_std - y_se_std), 
                  colour = "black") +
-  geom_point(data = rbind(band1_df, band2_df), 
+  geom_point(data = input_df, 
              mapping = aes(x = t, y = y_std, fill = d), shape = 21, size = 1) +
   scale_alpha_manual(values = c(`95%` = 0.2, `68%` = 0.5)) +
   labs(colour = "Band", fill = "Band", alpha = "Quantile",
@@ -421,6 +465,7 @@ signal_sds <- as.data.frame(output_draws) |>
   colMeans()
 signal_sds
 ```
+
 ```{r}
 output_draws |>
   as.data.frame() |> 
