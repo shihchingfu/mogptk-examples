@@ -10,11 +10,10 @@ This notebook contains the workflow for:
 - loading groundtruth 2-band (MOGP) time-series,
 - fitting a multicomponent MOSM GP model,
 - drawing posterior predictive samples,
-- visualising the posteriors .
+- visualising the posteriors.
 
 ```{r message=FALSE}
 library(here)
-library(dplyr)
 library(tidyr)
 library(ggplot2)
 library(cmdstanr)
@@ -23,6 +22,8 @@ library(bayesplot)
 library(readr)
 library(glue)
 library(jsonlite)
+library(MCMCpack) # rdirichlet()
+library(dplyr)
 
 register_knitr_engine(override = FALSE)
 
@@ -33,7 +34,7 @@ source(here("mogp-utils.R"))
 
 filename_stub <- "D2-Q3-seed4458-n300-mnar0.2-noise0.5"
 
-EXECUTE_SAMPLING <- TRUE
+EXECUTE_SAMPLING <- FALSE
 
 N_CHAINS <- 6
 N_WARMUP <- 1000
@@ -43,6 +44,30 @@ N_SAMPLES <- 1000
 estimate_mode <- function(x) {
   d <- density(x, n = 2^6)
   d$x[which.max(d$y)]
+}
+
+# Function plots histograms of draws
+plot_draw_histograms <- function(draws, parameter_name) {
+  draws_tidy <- draws |> 
+    as.data.frame() |> 
+    dplyr::select(.draw, starts_with( paste0(parameter_name, "[") )) |> 
+    pivot_longer(2:7) |> 
+    separate_wider_position(
+      cols = name, 
+      width = c("p" = stringr::str_length(parameter_name), 1, "Component" = 1, 1, "Band" = 1, 1))
+  
+  if (parameter_name == "s") {
+    draws_tidy <- draws_tidy |> 
+      rename(Component = "Band", Band = "Component") # s matrix is transposed
+  }
+  
+  draws_tidy |> 
+    ggplot() +
+    aes(x = value, fill = Band) +
+    geom_histogram(mapping = aes( y = after_stat(density) ),
+                   bins = 50, position = "identity", alpha = 0.5) +
+    facet_grid(rows = vars(Component), scales = "free", labeller = "label_both") +
+    labs(x = parameter_name)
 }
 ```
 
@@ -66,9 +91,21 @@ input_df |>
        title = glue("Seed = {input_params$seed}, M = {NROW(input_df)}"))
 ```
 
+Notes on data:
+
+- there is a gap in Band 2 data at around t = 6 to 7.
+- the time delay between Band 1 and 2 is perceptible in the distance between peaks, i.e., approximately 0.5.
+- both bands appear to have stationary mean and variance.
+
 ```{r}
 input_params
 ```
+
+- All bands and components have the same weights, $w$.
+- All components have the same central spectral frequency, $\mu$, across bands except for Component 3.
+- Spectral widths/length scales, $\Sigma$, are the same across all bands and components.
+- Time delay between bands, $\theta$, are the same across all components.
+- Phase differences, $\phi$, are all zero.
 
 # Model Fitting
 
@@ -114,8 +151,9 @@ data_list <- list(
   ell_max = ell_max,
   ell_loc = ell_loc,
   ell_scale = 1,
-  v_scale = 1, # data has been standardised
-  mu_scale = 3
+  signal_sd_scale = 0.5, # for lognormal prior
+  dir_conc = 0.8,
+  mu_scale = 3 # for halfnormal priors, radians/unit time
 )
 ```
 
@@ -125,31 +163,22 @@ ell_max
 ell_loc
 ```
 
-### Priors
-
-$$w^2 = \frac{v}{\sqrt{2 \pi \Sigma}}, \quad \Sigma = \frac{1}{\ell^2}, \quad \ell = \frac{1}{\sqrt{\Sigma}}$$
-
-
-$$
-v \sim \mathcal{N}_+(0, v_\textrm{scale}), \quad \mu \sim \mathcal{N}_+(0, \mu_\textrm{scale}), \quad \ell \sim \mathrm{lognormal}(\ell_\textrm{loc}, \ell_\textrm{scale}), \quad \theta_2 \sim \mathcal{N}(0, 1), \quad \phi_2 \sim \mathrm{U}[-\pi, \pi]
-$$
-
-$$v_\textrm{scale} = 1, \quad \mu_\textrm{scale} = 3, \quad \ell_\textrm{loc} = \log(\sqrt{\ell_\textrm{min}\times \ell_\textrm{max}}, \quad \ell_\textrm{scale} = 1, $$
-
 ```{r}
 format(start_time <- Sys.time())
 
 if (EXECUTE_SAMPLING) {
   init_fun <- function() {
     list(
-      mu1 = c(1, 2, 5) + rnorm(Q, 0, 0.5),
-      mu2 = c(1, 2, 6) + rnorm(Q, 0, 0.5)
+      signal_sd = c(0.8, 0.8),
+      s = rbind(rep(1 / Q, Q), rep(1 / Q, Q))   # array[2] simplex[Q]
+      #mu1 = c(1, 2, 5) + rnorm(Q, 0, 0.5),
+      #mu2 = c(1, 2, 6) + rnorm(Q, 0, 0.5)
     )
   }
 
   output <- stan_model$sample(
     data = data_list,
-    #init = init_fun,
+    init = init_fun,
     chains = N_CHAINS,
     parallel_chains = N_CHAINS,
     iter_warmup = N_WARMUP,
@@ -173,65 +202,56 @@ difftime(finish_time, start_time)
 
 # Results
 
-```{r}
-vars <- c("v", "w", "mu", "ell", "Sigma", "theta", "phi")
-output$summary(variables = vars, 
-               posterior::default_convergence_measures())
-```
+## Check convergence
+
+Check the converge for the parameters that were sampled: 
 
 ```{r}
-mcmc_trace(output$draws(vars))
-```
-
-```{r fig.height=6}
-mcmc_trace(output$draws(vars), pars = vars(starts_with("v")), 
-           facet_args = list(ncol = 1, strip.position = "right"))
-```
-
-```{r fig.height=6}
-mcmc_trace(output$draws(vars), pars = vars(starts_with("mu")), 
-           facet_args = list(ncol = 1, strip.position = "right"))
-```
-
-```{r fig.height=6}
-mcmc_trace(output$draws(vars), pars = vars(starts_with("ell")), 
-           facet_args = list(ncol = 1, strip.position = "right"))
-```
-
-```{r fig.height=6}
-mcmc_trace(output$draws(vars), pars = vars(starts_with("theta")), 
-           facet_args = list(ncol = 1, strip.position = "right"))
-```
-
-```{r fig.height=6}
-mcmc_trace(output$draws(vars), pars = vars(starts_with("phi")), 
-           facet_args = list(ncol = 1, strip.position = "right"))
+sampled_vars <- c("signal_sd", "s", "mu", "ell", "theta", "phi")
+all_vars <- c("w", "mu", "Sigma", "theta", "phi", "signal_sd", "s", "v", "ell")
+output$summary(variables = sampled_vars, default_convergence_measures())
 ```
 
 ```{r}
-valid_chains <- c(3,4)
-output_draws <- output$draws(variables = vars, format = "df") |> 
+mcmc_trace(output$draws(sampled_vars), pars = vars(starts_with("signal")), 
+           facet_args = list(nrow = 2, strip.position = "right"))
+```
+
+```{r}
+mcmc_trace(output$draws(sampled_vars), pars = vars(starts_with("s[")), 
+           facet_args = list(nrow = 3, strip.position = "right", dir = "lt"))
+```
+
+```{r}
+mcmc_trace(output$draws(sampled_vars), pars = vars(starts_with("mu")), 
+           facet_args = list(ncol = 2, strip.position = "right", dir = "tl"))
+```
+```{r}
+mcmc_trace(output$draws(sampled_vars), pars = vars(starts_with("ell")), 
+           facet_args = list(ncol = 2, strip.position = "right", dir = "tl"))
+```
+
+```{r}
+mcmc_trace(output$draws(sampled_vars), pars = vars(starts_with("theta")), 
+           facet_args = list(ncol = 2, strip.position = "right", dir = "tl"))
+```
+
+```{r}
+mcmc_trace(output$draws(sampled_vars), pars = vars(starts_with("phi")), 
+           facet_args = list(ncol = 2, strip.position = "right", dir = "tl"))
+```
+
+## Valid Chains
+
+```{r}
+valid_chains <- c(3,4,6)
+
+output_draws <- output$draws(variables = all_vars, format = "df") |> 
   subset_draws(chain = valid_chains)
 output_draws_mat <- as.matrix(output_draws)
 
-summary(output_draws)
+summarise_draws(output_draws, default_convergence_measures())
 ```
-
-```{r}
-mcmc_trace(output$draws(vars) |> 
-  subset_draws(chain = valid_chains))
-```
-
-```{r fig.height=6}
-mcmc_trace(output_draws, pars = vars(starts_with("ell")), 
-           facet_args = list(ncol = 1, strip.position = "right"))
-```
-
-```{r fig.height=6}
-mcmc_trace(output_draws, pars = vars(starts_with("theta")), 
-           facet_args = list(ncol = 1, strip.position = "right"))
-```
-
 ## Posterior Predictive Check
 
 ```{r}
@@ -253,10 +273,15 @@ pp_draw <- pred_D2_Q_draw(post_draw,
                           ts1 = ts1, ts2 = ts2)
 
 ggplot() +
-  geom_linerange(data = rbind(band1_df, band2_df), aes(x = t, ymax = y_std + y_se_std, ymin = y_std - y_se_std), colour = "black") +
+  geom_linerange(data = rbind(band1_df, band2_df), 
+                 mapping = aes(x = t, 
+                               ymax = y_std + y_se_std, 
+                               ymin = y_std - y_se_std), 
+                 colour = "black") +
   geom_line(data = pp_draw, aes(x = ts, y = fs, colour = d)) +
-  geom_point(data = rbind(band1_df, band2_df), aes(x = t, y = y_std, fill = d), shape = 21, size = 1.5) +
-  labs(colour = "Band", fill = "Band")
+  geom_point(data = rbind(band1_df, band2_df), 
+             mapping = aes(x = t, y = y_std, fill = d), shape = 21, size = 1.5) +
+  labs(colour = "Band", fill = "Band", y = "Standardised f")
 ```
 
 ```{r}
@@ -284,10 +309,14 @@ pp_draws |>
   geom_ribbon(aes(ymin = Q2.5, ymax = Q97.5, alpha = "95%")) +
   geom_ribbon(aes(ymin = Q16, ymax = Q84, alpha = "68%")) +
   geom_line(aes(colour = d, y = Mean)) +
-  geom_linerange(data = rbind(band1_df, band2_df), aes(x = t, ymax = y_std + y_se_std, ymin = y_std - y_se_std), colour = "black") +
-  geom_point(data = rbind(band1_df, band2_df), aes(x = t, y = y_std, fill = d), shape = 21, size = 1) +
+  geom_linerange(data = rbind(band1_df, band2_df), 
+                 mapping = aes(x = t, ymax = y_std + y_se_std, ymin = y_std - y_se_std), 
+                 colour = "black") +
+  geom_point(data = rbind(band1_df, band2_df), 
+             mapping = aes(x = t, y = y_std, fill = d), shape = 21, size = 1) +
   scale_alpha_manual(values = c(`95%` = 0.2, `68%` = 0.5)) +
-  labs(colour = "Band", fill = "Band", y = "Standardised f", x = "t", alpha = "Quantile") +
+  labs(colour = "Band", fill = "Band", alpha = "Quantile",
+       y = "Standardised f", x = "t", ) +
   theme(legend.position = "top")
 ```
 
@@ -299,81 +328,194 @@ print(input_params) # ground truth
 
 ```{r}
 posterior_means <- as.data.frame(output_draws) |> 
-  select(matches(vars), -.draw) |> 
+  dplyr::select(matches(all_vars), -.draw) |> 
   colMeans()
 posterior_means |> round(3)
 ```
 
 ```{r}
-posterior_modes <- sapply(select(as.data.frame(output_draws), matches(vars), -.draw), estimate_mode)
-posterior_modes
+posterior_modes <- sapply(dplyr::select(as.data.frame(output_draws), matches(all_vars), -.draw), estimate_mode)
+posterior_modes |> round(3)
 ```
+# Discussion
 
+## Checking `s`, $s$
+
+`s[i,q]` is the share of a band’s signal variance carried by each component.
 
 ```{r}
-plot_post_histograms <- function(draws, parameter_name) {
-  draws |> 
-    as.data.frame() |> 
-    select(.draw, starts_with(parameter_name)) |> 
-    pivot_longer(2:7) |> 
-    separate_wider_position(cols = name, 
-                            width = c("p" = stringr::str_length(parameter_name), 1, "Component" = 1, 1, "Band" = 1, 1)) |> 
-    ggplot() +
-    aes(x = value, fill = Band) +
-    geom_histogram(bins = 50, position = "identity", alpha = 0.5) +
-    facet_grid(rows = vars(Component), scales = "free", labeller = "label_both") +
-    labs(x = parameter_name)
-}
+ss <- as.data.frame(output_draws) |> 
+  dplyr::select(matches("s\\["), -.draw) |> 
+  colMeans() |> 
+  matrix(ncol = 3) |> t()
+ss
 ```
 
-# Interpreting $w$ and $v$
+```{r}
+plot_draw_histograms(output_draws, "s")
+```
 
-$w$ is the _amplitude_ of the spectral component q in band i (standardised units). 
+Component 3 captures most of the variance in both Band 1 (91\%) and in Band 2 (91\%). Components 1 and 2 capture less than 6\% of the variance each.
+
+This suggests that only Component 3's parameter estimates should be interpreted as reliable.
+
+## Checking $\ell$
+
+Coherence length is $\ell = \frac{1}{\sqrt{\Sigma}}$. There cannot be a stable cross-covariance if two oscillators already drift out of phase within just one coherence length. Long coherence lengths (narrow spectral peaks) make the $\mu$ gap matter more, short coherence lengths (broad spectral peaks) make the gap matter less.
+
+```{r}
+ells <- as.data.frame(output_draws) |> 
+  dplyr::select(matches("ell"), -.draw) |> 
+  colMeans() |> 
+  matrix(ncol = 2)
+ells
+```
+
+```{r}
+plot_draw_histograms(output_draws, "ell") +
+  geom_function(fun = dlnorm, 
+                args = list(meanlog = -0.2, sdlog = 1), 
+                mapping = aes(colour = "Prior"), 
+                linetype = "dashed") +
+  scale_colour_manual(values = "black") +
+  scale_x_continuous(transform = "log10", 
+                     labels = scales::label_number(accuracy = 0.1)) 
+```
+
+
+$\ell$ does not appear to be pushed up against any bounds or degerated to zero.
+
+## Checking coupling between bands within components
+
+How well the frequencies in the two bands line up within a component, i.e., a frequency overlap factor on [0,1].
+
+Coupling = 1 suggests both bands oscillate at same frequency. Coupling = 0 means two frequency peaks do not overlap, i.e., no shared structure between bands.
+
+```{r}
+ds <- output$draws(c("mu", "Sigma"), format = "matrix") |> subset_draws(chain = valid_chains)
+
+z_coupling <- function(q, d) {
+  mu1 <- d[, paste0("mu[", q, ",1]")]
+  mu2 <- d[, paste0("mu[", q, ",2]")]
+  S1  <- d[, paste0("Sigma[", q, ",1]")]
+  S2  <- d[, paste0("Sigma[", q, ",2]")]
+  z <- abs(mu1 - mu2) / (2 * sqrt(S1 + S2))
+  exp(-z^2) # peak coupling between the two bands
+}
+
+coup <- sapply(1:3, function(q) quantile(z_coupling(q, ds), c(0.05, 0.5, 0.95)))
+colnames(coup) <- paste("Component", 1:3)
+round(coup, 2)
+```
+
+Component 3 has a tightly shared oscillation between the bands, i.e., Bands 1 and Band 2 in Component 3 have close enough oscillation frequencies to remain correlated.
+
+
+## Interpreting `signal_sd`
+
+$S_i$ is the total standard deviation of the signal in each band, here: $i = 1,2$.
+
+```{r}
+signal_sds <- as.data.frame(output_draws) |> 
+  dplyr::select(matches("signal_sd"), -.draw) |> 
+  colMeans()
+signal_sds
+```
+```{r}
+output_draws |>
+  as.data.frame() |> 
+  dplyr::select(.draw, starts_with("signal")) |> 
+  pivot_longer(2:3) |> 
+  separate_wider_position(cols = name,  width = c("p" = 9, 1, "Band" = 1, 1)) |> 
+  ggplot() +
+  geom_histogram(mapping = aes(x = value, fill = Band, y = after_stat(density)), 
+                 bins = 50, 
+                 position = "identity", 
+                 alpha = 0.5) +
+  geom_function(fun = dlnorm, 
+                args = list(sdlog = 0.5), 
+                mapping = aes(colour = "Prior"), 
+                linetype = "dashed",
+                xlim = c(0, 3)) +
+  scale_colour_manual(values = "black") +
+  labs(x = "signal_sd", colour = "")
+```
+
+Recalling that the response variable $y$ has been standardised, we expect the total standard deviation of each band to be close to 1, which it is.
+
+
+## Interpreting $\Sigma$
+
+$\Sigma$s refer to the widths of the bumps in the spectral domain centred at the $\mu$s.
+
+```{r}
+input_params$Sigma
+
+Sigmas <- as.data.frame(output_draws) |>
+  dplyr::select(matches("Sigma")) |> 
+  summarise(across(everything(), mean)) |> 
+  matrix(ncol = 2)
+Sigmas
+```
+
+```{r}
+plot_draw_histograms(output_draws, "Sigma") + 
+  scale_x_continuous(transform = "log10", 
+                     breaks = c(0.1, 0.5, 1, 3, 5, 10, 100),
+                     labels = scales::label_number(accuracy = 0.1))
+```
+
+## Interpreting $w$ and $v$
+
+$w$ is the _amplitude_ of the spectral component $q$ in band $i$ (standardised units). 
 
 ```{r}
 input_params$w
-```
 
-```{r}
 ws <- as.data.frame(output_draws) |> 
-  select(matches("w"), -.draw) |> 
+  dplyr::select(matches("w"), -.draw) |> 
   colMeans() |> 
-  sqrt() |> 
   matrix(ncol = 2)
 ws
 ```
 
 ```{r}
-plot_post_histograms(output_draws, "w")
+plot_draw_histograms(output_draws, "w")
 ```
 
 If $w$ is near zero, then $\theta$ and $\phi$ for that component revert to their priors. 
 
-$w$ is derived from $v$ in this Stan model's parameterisation.
+It is perhaps easier to interpret the kernel (amplitude) variance in the time domain, instead of the (amplitude) magnitude in the spectral domain. Indeed, in this model, $w$ is a derived quantity from $v$.
 
 $$v = w^2 \cdot \sqrt{\frac{2 \pi}{\Sigma}} = w^2 \cdot \frac{\sqrt{2\pi}}{\ell}$$
 
+$$
+w = \sqrt{v / \sqrt{\frac{2\pi}{\Sigma}}
+$$
+
 ```{r}
 vs <- as.data.frame(output_draws) |> 
-  select(matches("v"), -.draw) |> 
+  dplyr::select(matches("v"), -.draw) |> 
   colMeans() |> 
-  sqrt() |> 
   matrix(ncol = 2)
 vs
 ```
 
+$v(q,i)$ is the amount of variance contributed by component $q$ to band $i$.
 
-Component 2 is the only one with non-trivial variance.
+```{r}
+plot_draw_histograms(output_draws, "v")
+```
 
-# Interpreting $\mu$s
+Component 3 contributes the most in both Bands 1 and 2.
+
+## Interpreting $\mu$s
 
 ```{r}
 input_params$mu
-```
 
-```{r}
 mus <- as.data.frame(output_draws) |> 
-  select(matches("mu"), -.draw) |> 
+  dplyr::select(matches("mu"), -.draw) |> 
   colMeans() |> 
   matrix(ncol = 2)
 mus
@@ -387,41 +529,13 @@ As the $\mu$s become more separated within a component, the component is really 
 
 If cross-covariance is zero, then there's insufficient information to estimate $\theta$ or $\phi$. $\mu$s are still identifiable but this component is really two unrelated oscillators, i.e., there is no shared signal to be delayed between bands.
 
-
 ```{r}
-plot_post_histograms(output_draws, "mu")
+plot_draw_histograms(output_draws, "mu")
 ```
 
-# Interpreting $\Sigma$s
+Only Component 3 is interpretable given the neglible $s$s in the other Components.
 
-$\Sigma$s refer to the widths of the bumps in the spectral domain centred at the $\mu$s.
-
-Coherence length is $\ell = \frac{1}{\sqrt{\Sigma}}$. There cannot be a stable cross-covariance, if two oscillators already drift out of phase within just one coherence length. Long coherence lengths (narrow spectral peaks) make the $\mu$ gap matter more, short coherence lengths (broad spectral peaks) make the gap matter less.
-
-```{r}
-input_params$Sigma
-```
-
-```{r}
-Sigmas <- as.data.frame(output_draws) |> 
-  select(matches("Sigma"), -.draw) |> 
-  colMeans() |> 
-  sqrt() |> 
-  matrix(ncol = 2)
-Sigmas
-```
-
-```{r}
-1/sqrt(Sigmas) # coherence length
-```
-
-```{r}
-plot_post_histograms(output_draws, "Sigma") +
-  scale_x_log10()
-```
-
-
-# Interpreting $\theta$s
+## Interpreting $\theta$s
 
 Entry `theta[q,i]` is band `i`’s (column) time shift within component `q` (row).
 
@@ -431,22 +545,21 @@ A delay is only meaningful relative to how fast the cross-covariance decays.
 
 ```{r}
 input_params$theta
-```
 
-```{r}
 thetas <- as.data.frame(output_draws) |> 
-  select(matches("theta"), -.draw) |> 
+  dplyr::select(matches("theta"), -.draw) |> 
   colMeans() |> 
   matrix(ncol = 2)
 thetas
 ```
 
-For example, `theta[3,2]` = 0.5, means that in component 3, the time shift between band 2 and band 1 is 0.5. Alternatively, component 3 in band 1 at time $t$ lines up with band 2 at $t - 0.5$.
-
+The element `theta[3,2]` = 0.5, means that in component 3, the time shift between band 2 and band 1 is 0.5. Alternatively, component 3 in band 1 at time $t$ lines up with band 2 at $t - 0.5$.
 
 ```{r}
-plot_post_histograms(output_draws, "theta")
+plot_draw_histograms(output_draws, "theta")
 ```
+
+Only Component 3 has a distinct lag between bands.
 
 ```{r}
 output_draws |> 
@@ -472,15 +585,13 @@ output_draws |>
   geom_vline(xintercept = posterior_means["theta[3,2]"], colour = "red") 
 ```
 
-# Interpreting $\phi$s
+## Interpreting $\phi$s
 
 ```{r}
 input_params$phi
-```
 
-```{r}
 phis <- as.data.frame(output_draws) |> 
-  select(matches("phi"), -.draw) |> 
+  dplyr::select(matches("phi"), -.draw) |> 
   colMeans() |> 
   matrix(ncol = 2)
 phis
@@ -489,32 +600,7 @@ phis
 A time shift of $\theta_{ij}$ corresponds to a phase shift of $\mu_{ij} \times \theta_{ij} + \phi_{ij}$ radians, i.e., the net phase offset at that frequency.
 
 ```{r}
-plot_post_histograms(output_draws, "phi")
+plot_draw_histograms(output_draws, "phi")
 ```
 
-# Coupling between bands within a component
-
-How well the frequencies in the two bands line up within a component, i.e., a frequency overlap factor on [0,1].
-
-Coupling = 1 suggests both bands oscillate at same frequency.
-
-Coupling = 0 means two frequency peaks do not overlap, i.e., no shared structure between bands.
-
-```{r}
-ds <- output$draws(c("mu", "Sigma"), format = "matrix") |> subset_draws(chain = valid_chains)
-
-z_coupling <- function(q, d) {
-  mu1 <- d[, paste0("mu[", q, ",1]")]
-  mu2 <- d[, paste0("mu[", q, ",2]")]
-  S1  <- d[, paste0("Sigma[", q, ",1]")]
-  S2  <- d[, paste0("Sigma[", q, ",2]")]
-  z <- abs(mu1 - mu2) / (2 * sqrt(S1 + S2))
-  exp(-z^2) # peak coupling between the two bands
-}
-
-coup <- sapply(1:3, function(q) quantile(z_coupling(q, ds), c(0.05, 0.5, 0.95)))
-colnames(coup) <- paste("Component", 1:3)
-round(coup, 2)
-```
-
-Component 2 has a tightly shared oscillation between the bands.
+The $\phi$s are indistinguishable from zero.
