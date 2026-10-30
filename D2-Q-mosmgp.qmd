@@ -32,7 +32,7 @@ color_scheme_set("viridis")
 
 source(here("mogp-utils.R"))
 
-filename_stub <- "D2-Q3-seed4458-n300-mnar0.2-noise0.5"
+filename_stub <- "D2-Q2-seed8641-n400-mnar0.2-noise0.05"
 
 EXECUTE_SAMPLING <- FALSE
 
@@ -51,7 +51,7 @@ plot_draw_histograms <- function(draws, parameter_name) {
   draws_tidy <- draws |> 
     as.data.frame() |> 
     dplyr::select(.draw, starts_with( paste0(parameter_name, "[") )) |> 
-    pivot_longer(2:7) |> 
+    pivot_longer(cols = 2:last_col()) |> 
     separate_wider_position(
       cols = name, 
       width = c("p" = stringr::str_length(parameter_name), 1, "Component" = 1, 1, "Band" = 1, 1))
@@ -85,7 +85,7 @@ raw_df |>
   ggplot() +
   aes(x = t, colour = d, alpha = ifelse(masked, 0.2, 1)) +
   geom_linerange(aes(ymax = y + y_se, ymin = y - y_se), colour = "black") +
-  geom_point(aes(y = y)) +
+  geom_point(aes(y = y), size = 0.5) +
   geom_line(aes(y = f), linewidth = 0.5, alpha = 0.3) +
   geom_rug(aes(y = y), sides = "b", position = "jitter") +
   labs(title = glue("Seed = {input_params$seed}, M = {sum(!raw_df$masked)}/{NROW(raw_df)}")) +
@@ -94,9 +94,7 @@ raw_df |>
 
 Notes on data:
 
-- there is a gap in Band 2 data at around t = 6 to 7.
-- the time delay between Band 1 and 2 is perceptible in the distance between peaks, i.e., approximately 0.5.
-- both bands appear to have stationary mean and variance.
+- 
 
 ```{r}
 input_params
@@ -129,7 +127,7 @@ if (FALSE) {
 
 ```{r}
 D <- 2
-Q <- 3 
+Q <- 2
 
 # Within-band standardisation
 band1_df <- filter(input_df, d == 1)
@@ -255,6 +253,7 @@ mcmc_trace(output$draws(sampled_vars), pars = vars(starts_with("s[")),
 mcmc_trace(output$draws(sampled_vars), pars = vars(starts_with("mu")), 
            facet_args = list(ncol = 2, strip.position = "right", dir = "tl"))
 ```
+
 ```{r}
 mcmc_trace(output$draws(sampled_vars), pars = vars(starts_with("ell")), 
            facet_args = list(ncol = 2, strip.position = "right", dir = "tl"))
@@ -273,7 +272,7 @@ mcmc_trace(output$draws(sampled_vars), pars = vars(starts_with("phi")),
 ## Valid Chains
 
 ```{r}
-valid_chains <- c(3,4)
+valid_chains <- c(1,2,3,5,6)
 
 output_draws <- output$draws(variables = all_vars, format = "df") |> 
   subset_draws(chain = valid_chains)
@@ -309,8 +308,7 @@ ggplot() +
                  mapping = aes(x = t, ymax = y + y_se, ymin = y - y_se), colour = "black") +
   geom_line(data = pp_draw, 
             mapping = aes(x = ts, y = fs*sd_colvec + mean_colvec, colour = d)) +
-  geom_point(data = input_df, 
-             mapping = aes(x = t, y = y, fill = d), shape = 21, size = 1.5) +
+  geom_point(data = input_df, mapping = aes(x = t, y = y, fill = d), shape = 21, size = 1.5) +
   labs(colour = "Band", fill = "Band", y = "f")
 ```
 
@@ -327,7 +325,6 @@ ggplot() +
   labs(colour = "Band", fill = "Band", y = "Standardised f")
 ```
 
-
 ```{r}
 pp_draws <- pred_D2_Q(draws = output_draws, 
                       Q = Q,
@@ -339,7 +336,7 @@ pp_draws <- pred_D2_Q(draws = output_draws,
                       y2_se = band2_df$y_se_std, 
                       ts1 = ts1, 
                       ts2 = ts2, 
-                      n_draws = 200)
+                      n_draws = 100)
 
 pp_draws |> 
   summarise(.by = c(d, ts),
@@ -352,12 +349,9 @@ pp_draws |>
   aes(x = ts, fill = d) +
   geom_ribbon(aes(ymin = Q2.5, ymax = Q97.5, alpha = "95%")) +
   geom_ribbon(aes(ymin = Q16, ymax = Q84, alpha = "68%")) +
-  geom_line(aes(colour = d, y = Mean)) +
-  geom_linerange(data = input_df, 
-                 mapping = aes(x = t, ymax = y_std + y_se_std, ymin = y_std - y_se_std), 
-                 colour = "black") +
-  geom_point(data = input_df, 
-             mapping = aes(x = t, y = y_std, fill = d), shape = 21, size = 1) +
+  geom_line(aes(colour = d, y = Mean), alpha = 1) +
+  geom_linerange(data = input_df, mapping = aes(x = t, ymax = y_std + y_se_std, ymin = y_std - y_se_std), colour = "black") +
+  geom_point(data = input_df, mapping = aes(x = t, y = y_std, fill = d), shape = 21, size = 1) +
   scale_alpha_manual(values = c(`95%` = 0.2, `68%` = 0.5)) +
   labs(colour = "Band", fill = "Band", alpha = "Quantile",
        y = "Standardised f", x = "t", ) +
@@ -391,7 +385,7 @@ posterior_modes |> round(3)
 ss <- as.data.frame(output_draws) |> 
   dplyr::select(matches("s\\["), -.draw) |> 
   colMeans() |> 
-  matrix(ncol = 3) |> t()
+  matrix(ncol = 2) |> t()
 ss
 ```
 
@@ -447,8 +441,8 @@ z_coupling <- function(q, d) {
   exp(-z^2) # peak coupling between the two bands
 }
 
-coup <- sapply(1:3, function(q) quantile(z_coupling(q, ds), c(0.05, 0.5, 0.95)))
-colnames(coup) <- paste("Component", 1:3)
+coup <- sapply(1:Q, function(q) quantile(z_coupling(q, ds), c(0.05, 0.5, 0.95)))
+colnames(coup) <- paste("Component", 1:Q)
 round(coup, 2)
 ```
 
@@ -620,14 +614,6 @@ output_draws |>
   aes(x = `theta[2,2]`) +
   geom_histogram(bins = 40) +
   geom_vline(xintercept = posterior_means["theta[2,2]"], colour = "red") 
-```
-
-```{r}
-output_draws |> 
-  ggplot() +
-  aes(x = `theta[3,2]`) +
-  geom_histogram(bins = 40) +
-  geom_vline(xintercept = posterior_means["theta[3,2]"], colour = "red") 
 ```
 
 ## Interpreting $\phi$s
