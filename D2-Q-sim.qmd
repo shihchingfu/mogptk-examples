@@ -26,12 +26,12 @@ The purpose of this notebook is to generate draws from a multi-output spectral m
 
 ```{r}
 D <- 2
-Q <- 3
+Q <- 2
 
 n_points_per_band <- 200
 
 pct_missing <- 0.2
-noise_sigma <- 0.5
+noise_sigma <- 0.1
 
 output <- NULL
 
@@ -42,18 +42,18 @@ output <- sim_D2_Q(
   masked_pct = pct_missing,
   Q = Q,
   params = list(
-    w = rbind(c(3, 3),
-              c(0.5, 0.5),
-              c(1, 1)),
-    mu = rbind(c(0.5, 0.5),
-               c(20, 21),
-               c(0.1, 0.2)),
+    w = rbind(c(1, 1),
+              #c(0.5, 0.5),
+              c(0.1, 0.1)),
+    mu = rbind(c(0.1, 0.1),
+               #c(20, 21),
+               c(20, 20)),
     Sigma = rbind(c(1, 1),
-                  c(1, 1),
-                  c(1, 4)),
-    theta = rbind(c(0, 0.1),
-                  c(0, 0),
-                  c(0, 0.1)),
+                  #c(1, 1),
+                  c(10, 10)),
+    theta = rbind(c(0, 0.2),
+                  #c(0, 0),
+                  c(0, 0)),
     phi = rbind(c(0, 0),
                 c(0, 0),
                 c(0, 0))),
@@ -69,7 +69,7 @@ output_df |>
   ggplot() +
   aes(x = t, colour = d, alpha = ifelse(masked, 0.2, 1)) +
   geom_linerange(aes(ymax = y + y_se, ymin = y - y_se), colour = "black") +
-  geom_point(aes(y = y)) +
+  geom_point(aes(y = y), size = 0.5) +
   geom_line(aes(y = f), linewidth = 0.5, alpha = 0.5) +
   geom_rug(aes(y = y), sides = "b", position = "jitter") +
   labs(title = glue("Seed = {output_params$seed}, M = {sum(!output_df$masked)}")) +
