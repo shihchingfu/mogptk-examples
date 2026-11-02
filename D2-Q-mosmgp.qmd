@@ -126,9 +126,6 @@ if (FALSE) {
 ```
 
 ```{r}
-D <- 2
-Q <- 2
-
 # Within-band standardisation
 band1_df <- filter(input_df, d == 1)
 band1_f_mean <- mean(band1_df$f)
@@ -160,6 +157,26 @@ input_df$y_se_std <- c(band1_df$y_se_std, band2_df$y_se_std)
 ## Sampling
 
 ```{r}
+D <- 2L
+Q <- 2L
+
+T_range <- diff(range(input_df$t))
+
+ell_min <- median( diff( sort(input_df$t)) )
+ell_max <- T_range/4
+ell_loc <- log(sqrt(ell_min * ell_max)) # for log-normal prior
+theta_max <- T_range
+
+ell_scale <- 1
+signal_sd_scale <- 1
+mu_scale <- 3
+theta_scale <- 1
+
+print(
+  glue("ell_min = {ell_min}\nell_max = {ell_max} \nell_loc = {ell_loc} \nell_scale = {ell_scale}, \nsignal_sd_scale = {signal_sd_scale} \nmu-scale = {mu_scale} \ntheta_max = {theta_max}  \ntheta_scale = {theta_scale}"))
+```
+
+```{r}
 ell_min <- diff( sort(input_df$t) ) |> mean() 
 ell_max <- diff(range(input_df$t))
 ell_loc <- log(sqrt(ell_min * ell_max)) # for log-normal prior
@@ -177,17 +194,65 @@ data_list <- list(
   ell_min = ell_min,
   ell_max = ell_max,
   ell_loc = ell_loc,
-  ell_scale = 1,
-  signal_sd_scale = 0.5, # for lognormal prior
+  ell_scale = ell_scale,
+  signal_sd_scale = signal_sd_scale, # for lognormal prior
   dir_conc = 0.8,
-  mu_scale = 3 # for halfnormal priors, radians/unit time
+  mu_scale = mu_scale, # for halfnormal priors, radians/unit time
+  theta_max = theta_max,
+  theta_scale = theta_scale
 )
 ```
 
+
+## Prior predictive
+
 ```{r}
-ell_min
-ell_max
-ell_loc
+cfg <- list(
+  Q = Q,
+  ell_min = ell_min, 
+  ell_max = ell_max,
+  ell_loc = log(sqrt(ell_min * ell_max)), 
+  ell_scale = ell_scale,
+  signal_sd_scale = signal_sd_scale, 
+  dir_conc = 0.8, 
+  mu_scale = mu_scale,
+  theta_scale = theta_scale, 
+  theta_max = ell_max
+)
+
+prior_draws <- prior_predictive(cfg, tstart = 0, tend = 10, n_per_band = 200, n_draws = 200)
+```
+
+```{r}
+ggplot() +
+  geom_line(data = prior_draws |> filter(.draw %in% sample.int(200, 10)), 
+            mapping = aes(x = t, y = f, colour = d, group = interaction(d,.draw)),
+            alpha = 0.5) +
+  geom_point(data = input_df, 
+             mapping = aes(x = t, y = y, fill = d), shape = 21, size = 1.5) +
+  #facet_wrap(vars(d), nrow = 2, scales = "free_y") +
+  labs(colour = "Band", fill = "Band", y = "f",
+       title = "Prior Predictive Samples")
+```
+
+```{r}
+prior_draws |> 
+  summarise(.by = c(d, t),
+            Mean = mean(f),
+            Q2.5 = quantile(f, probs = 0.025),
+            Q97.5 = quantile(f, probs = 0.975),
+            Q16 = quantile(f, probs = 0.16),
+            Q84 = quantile(f, probs = 0.84)) |> 
+  ggplot() +
+  aes(x = t, fill = d) +
+  geom_ribbon(aes(ymin = Q2.5, ymax = Q97.5, alpha = "95%")) +
+  geom_ribbon(aes(ymin = Q16, ymax = Q84, alpha = "68%")) +
+  geom_line(aes(colour = d, y = Mean), alpha = 1) +
+  geom_point(data = input_df, mapping = aes(x = t, y = y, fill = d), shape = 21, size = 1) +
+  scale_alpha_manual(values = c(`95%` = 0.2, `68%` = 0.5)) +
+  labs(colour = "Band", fill = "Band", alpha = "Quantile",
+       y = "y", x = "t", title = "Prior Predictive Samples") +
+  theme(legend.position = "bottom")
 ```
 
 ```{r}

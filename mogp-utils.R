@@ -54,6 +54,84 @@ get_param_mat <- function(r, name, Q) {
   matrix(as.numeric(r[cols]), Q, 2)
 }
 
+# Prior predictive draw
+prior_draw <- function(cfg) {
+  Q <- cfg$Q
+  signal_sd <- rlnorm(2, 0, cfg$signal_sd_scale)
+  s   <- cbind(rsimplex(Q, cfg$dir_conc), rsimplex(Q, cfg$dir_conc))  # Q x 2, columns sum to 1
+  mu1 <- sort(abs(rnorm(Q, 0, cfg$mu_scale)))
+  mu2 <- abs(rnorm(Q, 0, cfg$mu_scale))
+  ell <- matrix(rtrunc_lnorm(2 * Q, cfg$ell_loc, cfg$ell_scale, cfg$ell_min, cfg$ell_max), Q, 2)
+  theta2 <- rtrunc_norm(Q, cfg$theta_scale, -cfg$theta_max, cfg$theta_max)
+  phi2   <- runif(Q, -pi, pi)
+
+  Sigma <- 1 / ell^2
+  v <- sweep(s, 2, signal_sd^2, "*")
+  w <- sqrt(v / sqrt(2 * pi * Sigma))
+  list(signal_sd = signal_sd, s = s, v = v, w = w, mu = cbind(mu1, mu2),
+       ell = ell, Sigma = Sigma, theta = cbind(rep(0, Q), theta2),
+       phi = cbind(rep(0, Q), phi2))
+}
+
+# Prior predictive draws
+# cfg = list(Q, ell_min, ell_max, ell_loc, ell_scale, signal_sd_scale, dir_conc, mu_scale, theta_sd, theta_max)
+prior_predictive <- function(cfg,
+                             tstart, tend,
+                             n_per_band = 100,
+                             n_draws = 200) {
+
+  t1 <- seq(tstart, tend, length.out = n_per_band)
+  t2 <- t1
+
+  N1 <- length(t1)
+  N2 <- length(t2)
+  M <- N1 + N2
+
+  out_list <- vector("list", n_draws)
+  failed <- 0
+
+  for (d in seq_len(n_draws)) {
+    p <- prior_draw(cfg)
+
+    K <- K_D2_Q(t1, t2, p)
+
+    # Cholesky with growing jitter: smooth kernels are nearly singular
+    L <- NULL
+    for (jit in c(1e-6, 1e-5, 1e-4, 1e-3)) {
+      L <- tryCatch({
+        t(chol(K + jit * diag(M)))
+      },
+      error = function(e)
+        NULL
+      )
+
+      if (!is.null(L))
+        break
+    }
+
+    if (is.null(L)) {
+      failed <- failed + 1
+      next
+    }
+
+    f <- as.vector(L %*% rnorm(M))
+
+    out_list[[d]] <-
+      data.frame(
+        t = c(t1, t2),
+        f = f,
+        d = factor(rep(c(1, 2), times = c(N1, N2)))
+      )
+  }
+
+  if (failed > 0)
+    message(failed, " draw(s) dropped: Cholesky failed even with jitter 1e-3")
+
+  bind_rows(out_list, .id = ".draw")
+}
+
+
+
 # Draw single posterior predictive sample
 pred_D2_Q_draw <- function(
     posterior_draw, # 1 row df
@@ -558,3 +636,23 @@ create_block_missing_mask <- function(n, prop_missing = 0.5, seed = NULL) {
 
   return(missing_mask)
 }
+
+# Truncated normal
+rtrunc_norm <- function(n, sd, lo = -Inf, hi = Inf) {
+  u <- runif(n, pnorm(lo / sd), pnorm(hi / sd))
+  sd * qnorm(u)
+}
+
+# Truncated log normal
+rtrunc_lnorm <- function(n, meanlog, sdlog, lo, hi) {
+  u <- runif(n, plnorm(lo, meanlog, sdlog), plnorm(hi, meanlog, sdlog))
+  qlnorm(u, meanlog, sdlog)
+}
+
+# Simplex
+rsimplex <- function(Q, conc) {
+  g <- pmax(rgamma(Q, shape = conc), 1e-300)   # guard against underflow when conc is small
+  g / sum(g)
+}
+
+
