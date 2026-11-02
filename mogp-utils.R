@@ -655,4 +655,53 @@ rsimplex <- function(Q, conc) {
   g / sum(g)
 }
 
+# Function estimates the mode of a sample
+estimate_mode <- function(x) {
+  d <- density(x, n = 2^6)
+  d$x[which.max(d$y)]
+}
 
+# Function plots histograms of draws
+plot_draw_histograms <- function(draws, parameter_name) {
+  draws_tidy <- draws |>
+    as.data.frame() |>
+    dplyr::select(.draw, starts_with( paste0(parameter_name, "[") )) |>
+    pivot_longer(cols = 2:last_col()) |>
+    separate_wider_position(
+      cols = name,
+      width = c("p" = stringr::str_length(parameter_name), 1, "Component" = 1, 1, "Band" = 1, 1))
+
+  if (parameter_name == "s") {
+    draws_tidy <- draws_tidy |>
+      rename(Component = "Band", Band = "Component") # s matrix is transposed
+  }
+
+  draws_tidy |>
+    ggplot() +
+    aes(x = value, fill = Band) +
+    geom_histogram(mapping = aes( y = after_stat(density) ),
+                   bins = 50, position = "identity", alpha = 0.5) +
+    facet_grid(rows = vars(Component), scales = "free", labeller = "label_both") +
+    labs(x = parameter_name)
+}
+
+print_param_est <- function(draws, param_name, D, Q, FUN = mean) {
+  out <- as.data.frame(draws) |>
+    dplyr::select(matches(paste0(param_name, "\\[")), -.draw) |>
+    summarise(across(everything(), FUN)) |>
+    matrix(ncol = 2)
+
+  if (param_name == "s") {
+    out <- t(out)
+  }
+
+  if (param_name == "signal_sd") {
+    rownames(out) <- ""
+  } else {
+    rownames(out) <- paste("Component", 1:Q)
+  }
+
+  colnames(out) <- paste("Band", 1:D)
+
+  print(out)
+}
