@@ -70,6 +70,8 @@ data {
   real<lower=0> signal_sd_scale; // lognormal scale for each band's total signal sd
   real<lower=0> dir_conc; // Dirichlet concentration (< 1 shrinks components)
   real<lower=0> mu_scale; // prior scale for frequencies (radians/unit time)
+  real<lower=0> theta_max;
+  real<lower=0> theta_scale;
 }
 
 transformed data {
@@ -86,7 +88,7 @@ parameters {
   positive_ordered[Q] mu1; // band 1 spectral means (ordered)
   vector<lower=0>[Q] mu2;
   matrix<lower=ell_min, upper=ell_max>[Q, 2] ell; // envelope widths
-  vector[Q] theta2; // delay of band 2 relative to 1
+  vector<lower=-theta_max, upper=theta_max>[Q] theta2;
   vector<lower=-pi(), upper=pi()>[Q] phi2; // phase of band 2 relative to 1
 }
 
@@ -116,7 +118,7 @@ model {
   mu1 ~ normal(0, mu_scale);
   mu2 ~ normal(0, mu_scale);
   to_vector(ell) ~ lognormal(ell_loc, ell_scale);
-  theta2 ~ normal(0, 1);
+  theta2 ~ normal(0, theta_scale);
   phi2 ~ uniform(-pi(), pi());
 
   // Per-component kernel parameters for each distinct channel pair
