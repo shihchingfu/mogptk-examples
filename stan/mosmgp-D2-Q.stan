@@ -53,7 +53,7 @@ functions {
 }
 
 data {
-  int<lower=1> Q; // no. spectral components
+ int<lower=1> Q; // no. spectral components
   int<lower=1> N1;
   int<lower=1> N2;
   vector[N1] t1;
@@ -65,11 +65,13 @@ data {
 
   real<lower=0> ell_min; // min. envelope width
   real<lower=ell_min> ell_max; // max. envelope width
-  real ell_loc; // lognormal prior location for ell (log scale)
-  real<lower=0> ell_scale; // lognormal prior scale for ell
+  real<lower=0> ell_alpha; // inverse-gamma shape
+  real<lower=0> ell_beta;  // inverse-gamma scale
   real<lower=0> signal_sd_scale; // lognormal scale for each band's total signal sd
   real<lower=0> dir_conc; // Dirichlet concentration (< 1 shrinks components)
   real<lower=0> mu_scale; // prior scale for frequencies (radians/unit time)
+  real<lower=0> theta_max;
+  real<lower=0> theta_scale;
 }
 
 transformed data {
@@ -86,7 +88,7 @@ parameters {
   positive_ordered[Q] mu1; // band 1 spectral means (ordered)
   vector<lower=0>[Q] mu2;
   matrix<lower=ell_min, upper=ell_max>[Q, 2] ell; // envelope widths
-  vector[Q] theta2; // delay of band 2 relative to 1
+  vector<lower=-theta_max, upper=theta_max>[Q] theta2;
   vector<lower=-pi(), upper=pi()>[Q] phi2; // phase of band 2 relative to 1
 }
 
@@ -115,8 +117,8 @@ model {
 
   mu1 ~ normal(0, mu_scale);
   mu2 ~ normal(0, mu_scale);
-  to_vector(ell) ~ lognormal(ell_loc, ell_scale);
-  theta2 ~ normal(0, 1);
+  to_vector(ell) ~ inv_gamma(ell_alpha, ell_beta); // truncated to [ell_min, ell_max]
+  theta2 ~ normal(0, theta_scale);
   phi2 ~ uniform(-pi(), pi());
 
   // Per-component kernel parameters for each distinct channel pair
